@@ -228,6 +228,36 @@ Qed.
 
 End LiftGate.
 
+(** ** Transport lemmas for eq_rect on gates *)
+
+Lemma depth_eq_rect (n m : nat) (G : Type) (g : gate n G) (Heq : n = m) :
+  depth (eq_rect n (fun p => gate p G) g m Heq) = depth g.
+Proof. by subst. Qed.
+
+Lemma reach_eq_rect_full (n m : nat) (G : Type) (g : gate n G) (Heq : n = m) :
+  reach g = [set: 'I_n] ->
+  reach (eq_rect n (fun p => gate p G) g m Heq) = [set: 'I_m].
+Proof. by subst. Qed.
+
+Lemma lshift_rshift_cover (n : nat) :
+  (@lshift n n @: [set: 'I_n]) :|: (@rshift n n @: [set: 'I_n]) = [set: 'I_(n + n)].
+Proof.
+apply/setP => i; rewrite in_setU in_setT; apply/orP.
+case Hs: (split i) => [j | j].
+- left; apply/imsetP; exists j => //.
+  by move: (splitK i); rewrite Hs /= => ->.
+- right; apply/imsetP; exists j => //.
+  by move: (splitK i); rewrite Hs /= => ->.
+Qed.
+
+Lemma gate_size_eq_rect (n m : nat) (G : Type) (g : gate n G) (Heq : n = m) :
+  gate_size (eq_rect n (fun p => gate p G) g m Heq) = gate_size g.
+Proof. by subst. Qed.
+
+Lemma lift_gate_size (m p : nat) (G : Type) (f : 'I_m -> 'I_p) (g : gate m G) :
+  gate_size (lift_gate f g) = gate_size g.
+Proof. by elim: g => //= tag g1 -> g2 ->. Qed.
+
 (** The Cooley-Tukey butterfly circuit of depth exactly [k] for
     [2^k] inputs.  At each level, every output combines one gate
     from the left half (inputs [0..2^(k-1)-1]) with one gate from
@@ -261,9 +291,57 @@ Fixpoint bfly_gates (k : nat) :
 Definition butterfly_circuit (k : nat) : circuit (2 ^ k) G :=
   [ffun j => @bfly_gates k j].
 
-(* Depth and full-dependence proofs require handling the eq_rect cast
-   in bfly_gates. Deferred to next pass — the construction itself is
-   the critical-path item. *)
+Lemma bfly_depth (k : nat) (j : 'I_(2 ^ k)) :
+  depth (@bfly_gates k j) = k.
+Proof.
+elim: k j => [|k' IH] j //=.
+by rewrite depth_eq_rect /= !lift_gate_depth !IH maxnn.
+Qed.
+
+Lemma bfly_reach_full (k : nat) (j : 'I_(2 ^ k)) :
+  reach (@bfly_gates k j) = [set: 'I_(2 ^ k)].
+Proof.
+elim: k j => [|k' IH] j /=.
+- by apply/setP => i; rewrite in_set1 in_setT (ord1 i).
+- apply: reach_eq_rect_full.
+  rewrite /= !lift_gate_reach !IH; exact: lshift_rshift_cover.
+Qed.
+
+Lemma butterfly_full_dep (k : nat) :
+  full_dependence (butterfly_circuit k).
+Proof.
+by move=> j; rewrite /circ_reach /butterfly_circuit ffunE; exact: bfly_reach_full.
+Qed.
+
+Lemma butterfly_depth (k : nat) :
+  circ_depth (butterfly_circuit k) = k.
+Proof.
+apply/eqP; rewrite eqn_leq; apply/andP; split.
+- apply/bigmax_leqP => j _; by rewrite /butterfly_circuit ffunE bfly_depth.
+- by apply: full_dep_depth_bound => //; exact: butterfly_full_dep.
+Qed.
+
+Lemma bfly_gate_size_succ (k : nat) (j : 'I_(2 ^ k)) :
+  (gate_size (@bfly_gates k j)).+1 = (2 ^ k)%N.
+Proof.
+elim: k j => [|k' IH] j //=.
+rewrite gate_size_eq_rect /= !lift_gate_size.
+by rewrite -addSn -addnS !IH addnn -mul2n -expnS.
+Qed.
+
+Lemma bfly_gate_size (k : nat) (j : 'I_(2 ^ k)) :
+  gate_size (@bfly_gates k j) = (2 ^ k - 1)%N.
+Proof.
+by have /(f_equal predn) := bfly_gate_size_succ j; rewrite /= subn1.
+Qed.
+
+Lemma butterfly_work (k : nat) :
+  circ_work (butterfly_circuit k) = (2 ^ k * (2 ^ k - 1))%N.
+Proof.
+rewrite /circ_work (eq_bigr (fun _ => (2 ^ k - 1)%N)); last first.
+  by move=> j _; rewrite /butterfly_circuit ffunE bfly_gate_size.
+by rewrite sum_nat_const card_ord.
+Qed.
 
 End Butterfly.
 
@@ -727,17 +805,70 @@ Qed.
 End ThetaBound.
 
 (* ================================================================== *)
+(** * Composed NTT speedup from butterfly circuit                      *)
+(* ================================================================== *)
+
+Section ComposedNTT.
+
+Variable R : realType.
+
+Open Scope ring_scope.
+
+(** Composed two-sided speedup: any hardware implementation of the
+    NTT with span >= k satisfies T_sw/T_hw <= N and T_hw >= T_sw/N.
+    The span bound k comes from [butterfly_depth]. *)
+Theorem ntt_composed_speedup (k : nat) (N span work data P B : R) :
+  0 < k%:R :> R ->
+  0 < N ->
+  k%:R <= span ->
+  sw_time (ntt_ops k%:R N) / hw_time span work data P B <= N /\
+  sw_time (ntt_ops k%:R N) / N <= hw_time span work data P B.
+Proof. exact: theta_speedup. Qed.
+
+(** Achievability: with T_hw = k (optimal butterfly schedule using
+    P = N/2 processors), the speedup is exactly N. *)
+Theorem ntt_achievable_speedup (k : nat) (N : R) :
+  0 < k%:R :> R ->
+  sw_time (ntt_ops k%:R N) / k%:R = N.
+Proof. exact: optimal_hw_speedup. Qed.
+
+End ComposedNTT.
+
+(* ================================================================== *)
 (** * Concrete instantiation: N = 2^16                                 *)
 (* ================================================================== *)
 
-(** At N = 2^16 = 65536, the butterfly NTT has:
-    - k = 16 stages
-    - work = 16 * 65536 = 1048576 ops
-    - span = 16
-    - speedup <= N = 65536, or N/2 = 32768 with P = N/2 units *)
 Lemma concrete_span_bound (G : Type) :
   forall C : circuit (2 ^ 16) G, full_dependence C -> (16 <= circ_depth C)%N.
 Proof. move=> C; exact: ntt_depth_irreducibility. Qed.
+
+Lemma concrete_butterfly_depth (G : Type) (g0 : G) :
+  circ_depth (butterfly_circuit g0 16) = 16.
+Proof. exact: butterfly_depth. Qed.
+
+Lemma concrete_butterfly_full_dep (G : Type) (g0 : G) :
+  full_dependence (butterfly_circuit g0 16).
+Proof. exact: butterfly_full_dep. Qed.
+
+Section ConcreteSpeedup.
+
+Variable R : realType.
+
+Open Scope ring_scope.
+
+Theorem concrete_speedup (span work data P B : R) :
+  16%:R <= span ->
+  sw_time (ntt_ops 16%:R (2 ^ 16)%:R) /
+    hw_time span work data P B <= (2 ^ 16)%:R /\
+  sw_time (ntt_ops 16%:R (2 ^ 16)%:R) /
+    (2 ^ 16)%:R <= hw_time span work data P B.
+Proof. by move=> Hspan; apply: theta_speedup. Qed.
+
+Theorem concrete_achievable :
+  sw_time (ntt_ops 16%:R (2 ^ 16)%:R) / 16%:R = (2 ^ 16)%:R :> R.
+Proof. by apply: optimal_hw_speedup. Qed.
+
+End ConcreteSpeedup.
 
 (* ================================================================== *)
 (** * Axiom audit                                                      *)
@@ -758,3 +889,15 @@ Print Assumptions speedup_le_N.
 Print Assumptions hw_ge_sw_div_N.
 Print Assumptions theta_speedup.
 Print Assumptions concrete_span_bound.
+Print Assumptions bfly_depth.
+Print Assumptions bfly_reach_full.
+Print Assumptions butterfly_full_dep.
+Print Assumptions butterfly_depth.
+Print Assumptions bfly_gate_size.
+Print Assumptions butterfly_work.
+Print Assumptions ntt_composed_speedup.
+Print Assumptions ntt_achievable_speedup.
+Print Assumptions concrete_butterfly_depth.
+Print Assumptions concrete_butterfly_full_dep.
+Print Assumptions concrete_speedup.
+Print Assumptions concrete_achievable.
