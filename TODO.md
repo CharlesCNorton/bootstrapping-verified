@@ -1,23 +1,35 @@
 # Remaining gaps
 
-1. Formalize the `Z[X]/(X^N+1)` to Vandermonde connection via MathComp polynomials. Show NTT-based multiplication factors through Vandermonde evaluation, narrowing the bound from arbitrary invertible linear maps to the NTT specifically. Independent.
+1. Formalize bootstrapping as one end-to-end operator on `Z_q[X]/(X^N+1)`, with forward NTT, pointwise step, inverse NTT, key switching, modulus switching, digit extraction, and noise update in one typed object.
 
-2. Prove the Vandermonde factorization is forced by the polynomial ring structure, not merely sufficient. Depends on 1.
+2. Add a stage-indexed fan-in-2 DAG/network calculus with sharing, legal schedules, byte traffic, and cycle semantics.
 
-3. Make `fhe_omega_order` load-bearing: use `omega^N = 1` in butterfly correctness or NTT inverse. Currently a dead field in `fhe_params`.
+3. Construct the full negacyclic NTT in that calculus with explicit stage permutations, butterfly pairings, and twiddle multipliers.
 
-4. Instantiate `fhe_params` concretely over `Z/qZ` for an NTT-friendly prime `q = 1 (mod 2N)` with a primitive root of unity. Takes the bound from parametric to applied. Depends on 3.
+4. Prove that network computes the exact negacyclic transform over the quotient ring.
 
-5. Model ciphertext noise growth and the multiplicative depth budget. Without the recurrence linking bootstrapping frequency to circuit depth, the development proves a linear-algebra fact rather than an FHE constraint. Independent of 1-4.
+5. Derive full input-output dependence from that correctness theorem and drive the depth lower bound from semantics.
 
-6. Formalize key switching and modulus switching as circuit layers. Show their depth contributions do not absorb the NTT depth into a shallower combined circuit, establishing NTT as genuinely critical-path. Depends on 5.
+6. Prove the sharp staged-network laws `span = k`, `work = kN`, and `bytes = kNw`.
 
-7. Show `ntt_intensity = 1/w` falls below the ridge point for realistic hardware parameters, making `roofline_cross` fire on the NTT workload without an externally supplied inequality.
+7. Seal the formula-tree witness into its own theorem family and pin its separate law `work = N(N-1)`.
 
-8. End-to-end hardware theorem: no fan-in-2 implementation of NTT-based bootstrapping achieves latency below `k` cycles. Compose the circuit bound, execution model, and concrete instantiation into a single statement with hardware-legible hypotheses. Depends on 4, 6, 7.
+8. Instantiate the coefficient ring concretely over `Z/qZ` with `q = 1 (mod 2N)` and a certified primitive `2N`th root of unity.
 
-9. Annotate which theorems depend on MathComp boolp axioms (propext, funext, constructive indefinite description) and which are closed under the global context.
+9. Consume every algebraic hypothesis in proof: `omega^N = 1`, primitivity, unitness, and negacyclicity.
 
-10. Add CI via `docker-coq-action` targeting Rocq 9.0 and MathComp 2.5+.
+10. Formalize key switching, modulus switching, and digit extraction as verified layers in the same circuit calculus.
 
-11. Add a README covering the main results, dependencies, build instructions, axiom status, and roadmap.
+11. Prove composition theorems that preserve the NTT critical path through the entire bootstrapping pipeline.
+
+12. Formalize ciphertext noise growth and the multiplicative-depth budget as recurrences over that composed pipeline.
+
+13. Prove those recurrences force bootstrapping frequency and inject the NTT span into the global FHE latency lower bound.
+
+14. Lift the circuit theorem into a machine theorem with processors, bandwidth, memory hierarchy, and legal schedules.
+
+15. Prove the roofline regime from concrete hardware parameters and certified `ntt_intensity = 1/w`.
+
+16. Construct a schedule that attains the upper bound and close the latency gap to a genuine `Theta` speedup theorem.
+
+17. Eliminate dead fields, dead hypotheses, and orphan lemmas; publish a theorem-by-theorem axiom ledger; lock the artifact under CI; and add a README with scope, theorem map, build instructions, axiom status, and roadmap.
