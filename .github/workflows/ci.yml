@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fix workspace permissions
+        run: sudo chmod -R a+rwX "$GITHUB_WORKSPACE"
+
+      - name: Build and Check
+        uses: coq-community/docker-coq-action@v1
+        with:
+          opam_file: coq-bootstrapping-verified.opam
+          coq_version: "9.0"
+          ocaml_version: "4.14-flambda"
+          custom_script: |
+            set -eux
+            make
+            rocqchk bootstrapping
