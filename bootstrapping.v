@@ -2456,6 +2456,103 @@ Section NegacyclicQuotientEvaluation.
 
 Variable p : negacyclic_root_data.
 
+Definition half_ord (k : nat) (i : 'I_(2 ^ k.+1)) : 'I_(2 ^ k).
+Proof.
+apply: (@Ordinal (2 ^ k) ((val i)./2)).
+rewrite ltn_half_double.
+have Hi : (val i < 2 ^ k.+1)%N := ltn_ord i.
+suff -> : ((2 ^ k).*2 = 2 ^ k.+1)%N by exact: Hi.
+by rewrite expnS mulnC -muln2.
+Defined.
+
+Arguments half_ord _ _ : clear implicits.
+
+Lemma val_half_ord (k : nat) (i : 'I_(2 ^ k.+1)) :
+  val (half_ord k i) = (val i)./2.
+Proof. by []. Qed.
+
+Lemma half_ord_even (k : nat) (i : 'I_(2 ^ k)) :
+  half_ord k (@even_ord k i) = i.
+Proof.
+apply/val_inj.
+by rewrite val_half_ord val_even_ord half_double.
+Qed.
+
+Lemma half_ord_odd (k : nat) (i : 'I_(2 ^ k)) :
+  half_ord k (@odd_ord k i) = i.
+Proof.
+apply/val_inj.
+by rewrite val_half_ord val_odd_ord /= uphalf_double.
+Qed.
+
+Lemma odd_even_ord (k : nat) (i : 'I_(2 ^ k)) :
+  odd (val (@even_ord k i)) = false.
+Proof. by rewrite val_even_ord odd_double. Qed.
+
+Lemma odd_odd_ord (k : nat) (i : 'I_(2 ^ k)) :
+  odd (val (@odd_ord k i)) = true.
+Proof. by rewrite val_odd_ord /= odd_double. Qed.
+
+Lemma even_ord_half_ord (k : nat) (i : 'I_(2 ^ k.+1)) :
+  ~~ odd (val i) ->
+  @even_ord k (half_ord k i) = i.
+Proof.
+move=> Heven.
+apply/val_inj.
+by rewrite val_even_ord val_half_ord even_halfK.
+Qed.
+
+Lemma odd_ord_half_ord (k : nat) (i : 'I_(2 ^ k.+1)) :
+  odd (val i) ->
+  @odd_ord k (half_ord k i) = i.
+Proof.
+move=> Hodd.
+apply/val_inj.
+rewrite val_odd_ord val_half_ord.
+have H := odd_double_half (val i).
+rewrite Hodd addnC in H.
+rewrite addn1 in H.
+exact H.
+Qed.
+
+Definition coeff_eval_at (k : nat)
+    (x : ngr_ring p) (v : 'I_(2 ^ k) -> ngr_ring p) : ngr_ring p :=
+  \sum_(i < 2 ^ k) v i * x ^+ val i.
+
+Lemma coeff_eval_at_split
+    (k : nat) (x : ngr_ring p) (v : 'I_(2 ^ k.+1) -> ngr_ring p) :
+  coeff_eval_at x v =
+    coeff_eval_at (x ^+ 2) (fun i => v (@even_ord k i)) +
+    x * coeff_eval_at (x ^+ 2) (fun i => v (@odd_ord k i)).
+Proof.
+rewrite /coeff_eval_at (bigID (fun i : 'I_(2 ^ k.+1) => odd i)) /= addrC.
+congr (_ + _).
+- transitivity (\sum_(i < 2 ^ k) v (@even_ord k i) * x ^+ i.*2).
+  + rewrite (reindex_onto (@even_ord k) (@half_ord k)) /=.
+    * rewrite (eq_bigl (fun _ => true)).
+        by [].
+      move=> i.
+      by rewrite odd_double half_ord_even eqxx.
+    * move=> i.
+      exact: even_ord_half_ord.
+  + apply: eq_bigr => i _.
+    by rewrite -muln2 mulnC -exprM.
+- transitivity
+    (\sum_(i < 2 ^ k) x * (v (@odd_ord k i) * (x ^+ 2) ^+ i)).
+  + rewrite (reindex_onto (@odd_ord k) (@half_ord k)) /=.
+    * transitivity (\sum_(i < 2 ^ k) v (@odd_ord k i) * x ^+ i.*2.+1).
+      -- rewrite (eq_bigl (fun _ => true)).
+           by [].
+         move=> i.
+         by rewrite odd_double half_ord_odd eqxx.
+      -- apply: eq_bigr => i _.
+         rewrite exprS -muln2 mulnC -exprM.
+         by rewrite mulrCA.
+    * move=> i Hodd.
+      exact: odd_ord_half_ord.
+  + by rewrite -mulr_sumr.
+Qed.
+
 Definition negacyclic_eval_point (j : 'I_(ngr_dim p)) : ngr_ring p :=
   ngr_omega p ^+ (2 * val j + 1).
 
@@ -2474,6 +2571,117 @@ Theorem exact_negacyclic_operator_on_bitrev
 Proof.
 exact: (@exact_ntt_shared_semantics_bitrev
           (ngr_ring p) (ngr_omega p) (ngr_exp p) v j).
+Qed.
+
+Theorem exact_ntt_bitrev_eval_closed_form
+    (k stride : nat)
+    (v : 'I_(2 ^ k) -> ngr_ring p) (j : 'I_(2 ^ k))
+    (Horder : ngr_omega p ^+ (stride * (2 ^ k.+1)) = 1)
+    (Hhalf : ngr_omega p ^+ (stride * (2 ^ k)) = -1) :
+  @exact_ntt_bitrev_eval (ngr_ring p) (ngr_omega p) k stride v j =
+  coeff_eval_at (ngr_omega p ^+ (stride * (2 * val j + 1))) v.
+Proof.
+elim: k stride v j Horder Hhalf => [|k IH] stride v j Horder Hhalf /=.
+- rewrite /coeff_eval_at big_ord1 /= expr0 mulr1.
+  by [].
+- have Horder' : ngr_omega p ^+ (stride.*2 * (2 ^ k.+1)) = 1.
+    have -> : (stride.*2 * (2 ^ k.+1) = stride * (2 * 2 ^ k.+1))%N.
+      by rewrite -muln2 -mulnA.
+    have -> : (stride * (2 * 2 ^ k.+1) = stride * (2 ^ k.+2))%N.
+      by rewrite [in RHS]expnS.
+    exact: Horder.
+  have Hhalf' : ngr_omega p ^+ (stride.*2 * (2 ^ k)) = -1.
+    have -> : (stride.*2 * (2 ^ k) = stride * (2 * 2 ^ k))%N.
+      by rewrite -muln2 -mulnA.
+    have -> : (stride * (2 * 2 ^ k) = stride * (2 ^ k.+1))%N.
+      by rewrite [in RHS]expnS.
+    exact: Hhalf.
+  case Hj: (split (@cast_ord (2 ^ k.+1) ((2 ^ k) + (2 ^ k))
+                            (esym (ntt_half_size_eq k)) j)) => [i|i] /=.
+  + have -> : j = @ntt_left_output k i by exact: ntt_left_outputP Hj.
+    pose x := ngr_omega p ^+ (stride * (2 * val i + 1)).
+    have Hx2 : x ^+ 2 = ngr_omega p ^+ (stride.*2 * (2 * val i + 1)).
+      rewrite /x -exprM.
+      pose a := (2 * val i + 1)%N.
+      have -> : (stride * a * 2 = (stride + stride) * a)%N.
+        by rewrite muln2 doubleMl addnn.
+      by rewrite /a addnn.
+    rewrite IH // IH //.
+    have -> :
+        coeff_eval_at (ngr_omega p ^+ (stride.*2 * (2 * val i + 1)))
+          (fun t => v (@even_ord k t)) =
+        coeff_eval_at (x ^+ 2) (fun t => v (@even_ord k t)).
+      by rewrite -Hx2.
+    have -> :
+        coeff_eval_at (ngr_omega p ^+ (stride.*2 * (2 * val i + 1)))
+          (fun t => v (@odd_ord k t)) =
+        coeff_eval_at (x ^+ 2) (fun t => v (@odd_ord k t)).
+      by rewrite -Hx2.
+    rewrite /ntt_twiddle /x val_ntt_left_output.
+    have Hiodd : i.*2.+1 = 2 * val i + 1.
+      have -> : 2 * val i + 1 = (2 * val i).+1.
+        exact: addn1.
+      by rewrite -muln2 mulnC.
+    have -> :
+        ngr_omega p ^+ (stride * i.*2.+1) =
+        ngr_omega p ^+ (stride * (2 * val i + 1)).
+      by rewrite Hiodd.
+    symmetry.
+    exact: coeff_eval_at_split.
+  + have -> : j = @ntt_right_output k i by exact: ntt_right_outputP Hj.
+    pose x := ngr_omega p ^+ (stride * (2 * val i + 1)).
+    have Hx2 : x ^+ 2 = ngr_omega p ^+ (stride.*2 * (2 * val i + 1)).
+      rewrite /x -exprM.
+      pose a := (2 * val i + 1)%N.
+      have -> : (stride * a * 2 = (stride + stride) * a)%N.
+        by rewrite muln2 doubleMl addnn.
+      by rewrite /a addnn.
+    have Hright :
+        ngr_omega p ^+ (stride * (2 * val (@ntt_right_output k i) + 1)) = - x.
+      rewrite val_ntt_right_output /x.
+      have -> :
+          (stride * (2 * (2 ^ k + val i) + 1) =
+           stride * (2 * val i + 1) + stride * (2 ^ k.+1))%N.
+        rewrite [2 ^ k + val i]addnC expnS -mulnDr.
+        congr (stride * _)%N.
+        by rewrite mulnDr addnAC.
+      by rewrite exprD Hhalf mulrN1.
+    have Hneg2 : (- x) ^+ 2 = x ^+ 2.
+      by rewrite !expr2 mulrNN.
+    rewrite IH // IH //.
+    have -> :
+        coeff_eval_at (ngr_omega p ^+ (stride.*2 * (2 * val i + 1)))
+          (fun t => v (@even_ord k t)) =
+        coeff_eval_at (x ^+ 2) (fun t => v (@even_ord k t)).
+      by rewrite -Hx2.
+    have -> :
+        coeff_eval_at (ngr_omega p ^+ (stride.*2 * (2 * val i + 1)))
+          (fun t => v (@odd_ord k t)) =
+        coeff_eval_at (x ^+ 2) (fun t => v (@odd_ord k t)).
+      by rewrite -Hx2.
+    rewrite /ntt_twiddle /x.
+    rewrite Hright.
+    symmetry.
+    rewrite coeff_eval_at_split Hneg2.
+    by rewrite mulrN.
+Qed.
+
+Theorem negacyclic_recursive_eval_closed_form
+    (v : 'I_(ngr_dim p) -> ngr_ring p) (j : 'I_(ngr_dim p)) :
+  negacyclic_recursive_eval v j = negacyclic_quotient_eval v j.
+Proof.
+rewrite /negacyclic_recursive_eval /negacyclic_quotient_eval.
+apply: (@exact_ntt_bitrev_eval_closed_form (ngr_exp p) 1 v j).
+- by rewrite mul1n.
+- by rewrite mul1n.
+Qed.
+
+Theorem exact_negacyclic_operator_quotient_on_bitrev
+    (v : 'I_(ngr_dim p) -> ngr_ring p) (j : 'I_(ngr_dim p)) :
+  exact_negacyclic_operator (@bitrev_state (ngr_ring p) (ngr_exp p) v) j =
+  negacyclic_quotient_eval v j.
+Proof.
+by rewrite exact_negacyclic_operator_on_bitrev negacyclic_recursive_eval_closed_form.
 Qed.
 
 Definition negacyclic_origin_index : 'I_(ngr_dim p) :=
