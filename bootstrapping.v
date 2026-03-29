@@ -2,8 +2,8 @@
 (*                                                                            *)
 (*                 Irreducibility of FHE Bootstrapping Depth                  *)
 (*                                                                            *)
-(*     Lower bounds on NTT-based bootstrapping circuit depth, roofline        *)
-(*     execution model, and constant-factor speedup theorems.                 *)
+(*     Lower-bound core, staged shared-network transforms, abstract           *)
+(*     bootstrapping shells, and execution-model corollaries.                 *)
 (*                                                                            *)
 (*     Author: Charles C. Norton                                              *)
 (*     Date: March 2026                                                       *)
@@ -20,6 +20,9 @@ Unset Strict Implicit.
 Unset Printing Implicit Defensive.
 
 Import Order.Theory Order.TotalTheory GRing.Theory Num.Theory.
+
+(* The development is organized around the lower-bound core, the staged
+   shared-network calculus, and the theorem program recorded in TODO.md. *)
 
 (* ================================================================== *)
 (** * Power-of-two infrastructure                                      *)
@@ -249,6 +252,23 @@ Fixpoint eval_network (Net : shared_network) (state : 'I_n -> T) : 'I_n -> T :=
   | st :: Net' => eval_network Net' (eval_stage st state)
   end.
 
+Lemma eval_stage_state_eq
+    (st : shared_stage) (state1 state2 : 'I_n -> T) (j : 'I_n) :
+  (forall i, state1 i = state2 i) ->
+  eval_stage st state1 j = eval_stage st state2 j.
+Proof. by move=> Hstate; rewrite /eval_stage !Hstate. Qed.
+
+Lemma eval_network_state_eq
+    (Net : shared_network) (state1 state2 : 'I_n -> T) (j : 'I_n) :
+  (forall i, state1 i = state2 i) ->
+  eval_network Net state1 j = eval_network Net state2 j.
+Proof.
+elim: Net state1 state2 j => [|st Net IH] state1 state2 j Hstate /=.
+- exact: Hstate.
+- apply: IH => i.
+  exact: eval_stage_state_eq Hstate.
+Qed.
+
 Lemma eval_network_cat (Net1 Net2 : shared_network) (state : 'I_n -> T) :
   eval_network (Net1 ++ Net2) state =
   eval_network Net2 (eval_network Net1 state).
@@ -423,13 +443,12 @@ Qed.
 
 Lemma eval_parallel_stage_join
     (left_stage right_stage : shared_stage m O)
-    (left_state right_state : 'I_m -> T) :
+    (left_state right_state : 'I_m -> T) (j : 'I_(m + m)) :
   eval_stage ops (parallel_stage left_stage right_stage)
-             (join_halves left_state right_state) =
+             (join_halves left_state right_state) j =
   join_halves (eval_stage ops left_stage left_state)
-              (eval_stage ops right_stage right_state).
+              (eval_stage ops right_stage right_state) j.
 Proof.
-apply: boolp.functional_extensionality_dep => j.
 case Hs: (split j) => [i|i].
 - move: (splitK j); rewrite Hs /= => <-.
   by rewrite /eval_stage /parallel_stage /join_halves /= !split_lshift_eq.
@@ -447,9 +466,14 @@ Proof.
 elim: Net left_state right_state i => [|st Net IH] left_state right_state i /=.
 - by rewrite /join_halves split_lshift_eq.
 - have -> :
-      eval_stage ops (parallel_stage st st) (join_halves left_state right_state) =
-      join_halves (eval_stage ops st left_state) (eval_stage ops st right_state).
-    exact: eval_parallel_stage_join.
+      eval_network ops (parallel_network Net Net)
+        (eval_stage ops (parallel_stage st st)
+           (join_halves left_state right_state)) (lshift m i) =
+      eval_network ops (parallel_network Net Net)
+        (join_halves (eval_stage ops st left_state)
+                     (eval_stage ops st right_state)) (lshift m i).
+    apply: eval_network_state_eq => j.
+    exact: (eval_parallel_stage_join st st left_state right_state j).
   exact: IH.
 Qed.
 
@@ -463,9 +487,14 @@ Proof.
 elim: Net left_state right_state i => [|st Net IH] left_state right_state i /=.
 - by rewrite /join_halves split_rshift_eq.
 - have -> :
-      eval_stage ops (parallel_stage st st) (join_halves left_state right_state) =
-      join_halves (eval_stage ops st left_state) (eval_stage ops st right_state).
-    exact: eval_parallel_stage_join.
+      eval_network ops (parallel_network Net Net)
+        (eval_stage ops (parallel_stage st st)
+           (join_halves left_state right_state)) (rshift m i) =
+      eval_network ops (parallel_network Net Net)
+        (join_halves (eval_stage ops st left_state)
+                     (eval_stage ops st right_state)) (rshift m i).
+    apply: eval_network_state_eq => j.
+    exact: (eval_parallel_stage_join st st left_state right_state j).
   exact: IH.
 Qed.
 
@@ -592,25 +621,33 @@ elim: k v j => [|k' IH] v j /=.
   pose raw_j : 'I_(N + N) :=
     @cast_ord (2 ^ k'.+1) (N + N) (esym Heq) j.
   have Hstate :
-      (fun j0 : 'I_(2 ^ k'.+1) =>
-         raw_state (@cast_ord (2 ^ k'.+1) (N + N) (esym Heq) j0)) = v.
-    apply: boolp.functional_extensionality_dep => j0.
-    by rewrite /raw_state cast_ordKV.
+      forall j0 : 'I_(2 ^ k'.+1),
+        raw_state (@cast_ord (2 ^ k'.+1) (N + N) (esym Heq) j0) = v j0.
+    by move=> j0; rewrite /raw_state cast_ordKV.
   have Hj : @cast_ord (N + N) (2 ^ k'.+1) Heq raw_j = j.
     by rewrite /raw_j cast_ordKV.
   have Hraw :
       eval_network ntt_gate_semantics (ntt_shared_network k'.+1) v j =
       eval_network ntt_gate_semantics raw_net raw_state raw_j.
-    rewrite /ntt_shared_network /= -Hstate -Hj.
-    exact: (@eval_shared_network_eq_rect
-              (N + N) (2 ^ k'.+1) ntt_gate_tag R
-              ntt_gate_semantics raw_net Heq raw_state raw_j).
+    have Hstate_eq :
+        eval_network ntt_gate_semantics (ntt_shared_network k'.+1) v j =
+        eval_network ntt_gate_semantics (ntt_shared_network k'.+1)
+          (fun j0 : 'I_(2 ^ k'.+1) =>
+             raw_state (@cast_ord (2 ^ k'.+1) (N + N) (esym Heq) j0)) j.
+      apply: eval_network_state_eq => j0.
+      exact: esym (Hstate j0).
+    have Hraw0 :=
+      @eval_shared_network_eq_rect
+        (N + N) (2 ^ k'.+1) ntt_gate_tag R
+        ntt_gate_semantics raw_net Heq raw_state raw_j.
+    rewrite Hj in Hraw0.
+    exact: eq_trans Hstate_eq Hraw0.
   have Hjoin :
-      raw_state =
-      join_halves (fun t => raw_state (lshift N t))
-                  (fun t => raw_state (rshift N t)).
-    apply: boolp.functional_extensionality_dep => j0.
-    rewrite /join_halves.
+      forall j0 : 'I_(N + N),
+        raw_state j0 =
+        join_halves (fun t => raw_state (lshift N t))
+                    (fun t => raw_state (rshift N t)) j0.
+    move=> j0; rewrite /join_halves.
     case Hs: (split j0) => [i|i].
     - move: (splitK j0); rewrite Hs /= => <-.
       by [].
@@ -619,12 +656,52 @@ elim: k v j => [|k' IH] v j /=.
   rewrite Hraw /raw_net eval_network_cat /= /ntt_shared_semantics /= /raw_j.
   case Hs: (split (@cast_ord (2 ^ k'.+1) (N + N) (esym Heq) j)) => [i|i] /=.
   + rewrite /eval_stage /ntt_merge_stage /ntt_gate_semantics /= Hs /=.
-    rewrite Hjoin.
+    have Hstate_join_l :
+        eval_network ntt_gate_semantics
+            (parallel_network (ntt_shared_network k') (ntt_shared_network k'))
+            raw_state (lshift N i) =
+        eval_network ntt_gate_semantics
+            (parallel_network (ntt_shared_network k') (ntt_shared_network k'))
+            (join_halves (fun t => raw_state (lshift N t))
+                         (fun t => raw_state (rshift N t))) (lshift N i).
+      apply: eval_network_state_eq => t.
+      exact: Hjoin.
+    have Hstate_join_r :
+        eval_network ntt_gate_semantics
+            (parallel_network (ntt_shared_network k') (ntt_shared_network k'))
+            raw_state (rshift N i) =
+        eval_network ntt_gate_semantics
+            (parallel_network (ntt_shared_network k') (ntt_shared_network k'))
+            (join_halves (fun t => raw_state (lshift N t))
+                         (fun t => raw_state (rshift N t))) (rshift N i).
+      apply: eval_network_state_eq => t.
+      exact: Hjoin.
+    rewrite Hstate_join_l Hstate_join_r.
     rewrite eval_parallel_network_lshift eval_parallel_network_rshift.
     by rewrite (IH (fun t => raw_state (lshift N t)) i)
                (IH (fun t => raw_state (rshift N t)) i).
   + rewrite /eval_stage /ntt_merge_stage /ntt_gate_semantics /= Hs /=.
-    rewrite Hjoin.
+    have Hstate_join_l :
+        eval_network ntt_gate_semantics
+            (parallel_network (ntt_shared_network k') (ntt_shared_network k'))
+            raw_state (lshift N i) =
+        eval_network ntt_gate_semantics
+            (parallel_network (ntt_shared_network k') (ntt_shared_network k'))
+            (join_halves (fun t => raw_state (lshift N t))
+                         (fun t => raw_state (rshift N t))) (lshift N i).
+      apply: eval_network_state_eq => t.
+      exact: Hjoin.
+    have Hstate_join_r :
+        eval_network ntt_gate_semantics
+            (parallel_network (ntt_shared_network k') (ntt_shared_network k'))
+            raw_state (rshift N i) =
+        eval_network ntt_gate_semantics
+            (parallel_network (ntt_shared_network k') (ntt_shared_network k'))
+            (join_halves (fun t => raw_state (lshift N t))
+                         (fun t => raw_state (rshift N t))) (rshift N i).
+      apply: eval_network_state_eq => t.
+      exact: Hjoin.
+    rewrite Hstate_join_l Hstate_join_r.
     rewrite eval_parallel_network_lshift eval_parallel_network_rshift.
     by rewrite (IH (fun t => raw_state (lshift N t)) i)
                (IH (fun t => raw_state (rshift N t)) i).
@@ -678,12 +755,8 @@ Proof.
 elim: Net C v j => [|st Net IH] C v j /=.
 - by [].
 - rewrite IH.
-  have Hstage :
-      (fun i : 'I_n => eval ops v (apply_stage_circuit st C i)) =
-      eval_stage ops st (fun i => eval ops v (C i)).
-    apply: boolp.functional_extensionality_dep => i.
-    exact: eval_apply_stage_circuit.
-  by rewrite Hstage.
+  apply: eval_network_state_eq => i.
+  exact: eval_apply_stage_circuit.
 Qed.
 
 Lemma network_circuit_eval
@@ -691,12 +764,9 @@ Lemma network_circuit_eval
   eval ops v (network_circuit Net j) =
   eval_network ops Net v j.
 Proof.
-have Hinput :
-    (fun i : 'I_n => eval ops v (input_circuit i)) = v.
-  apply: boolp.functional_extensionality_dep => i.
-  by rewrite /input_circuit ffunE.
-rewrite /network_circuit network_circuit_from_eval Hinput.
-by [].
+rewrite /network_circuit network_circuit_from_eval.
+apply: eval_network_state_eq => i.
+by rewrite /input_circuit ffunE.
 Qed.
 
 End SharedNetworkCircuitEval.
@@ -1083,6 +1153,303 @@ Qed.
 End NTTSharedDependence.
 
 (* ================================================================== *)
+(** * Bit-reversed views of power-of-two input states                  *)
+(* ================================================================== *)
+
+Definition even_ord (k : nat) (i : 'I_(2 ^ k)) : 'I_(2 ^ k.+1).
+Proof.
+apply: (@Ordinal (2 ^ k.+1) ((val i).*2)).
+by rewrite expnS mulnC muln2 ltn_double ltn_ord.
+Defined.
+
+Definition odd_ord (k : nat) (i : 'I_(2 ^ k)) : 'I_(2 ^ k.+1).
+Proof.
+apply: (@Ordinal (2 ^ k.+1) ((val i).*2.+1)).
+by rewrite expnS mulnC muln2 ltn_Sdouble ltn_ord.
+Defined.
+
+Lemma val_even_ord (k : nat) (i : 'I_(2 ^ k)) :
+  val (@even_ord k i) = (val i).*2.
+Proof. by []. Qed.
+
+Lemma val_odd_ord (k : nat) (i : 'I_(2 ^ k)) :
+  val (@odd_ord k i) = (val i).*2.+1.
+Proof. by []. Qed.
+
+Arguments even_ord _ _ : clear implicits.
+Arguments odd_ord _ _ : clear implicits.
+
+Section BitReverseState.
+
+Variable T : Type.
+
+Definition even_state (k : nat) (v : 'I_(2 ^ k.+1) -> T) : 'I_(2 ^ k) -> T :=
+  fun i => v (even_ord k i).
+
+Definition odd_state (k : nat) (v : 'I_(2 ^ k.+1) -> T) : 'I_(2 ^ k) -> T :=
+  fun i => v (odd_ord k i).
+
+Arguments even_state _ _ : clear implicits.
+Arguments odd_state _ _ : clear implicits.
+
+Fixpoint bitrev_state (k : nat) : ('I_(2 ^ k) -> T) -> 'I_(2 ^ k) -> T :=
+  match k return ('I_(2 ^ k) -> T) -> 'I_(2 ^ k) -> T with
+  | 0 => fun v => v
+  | k'.+1 =>
+      fun v j =>
+        match split (@cast_ord (2 ^ k'.+1) ((2 ^ k') + (2 ^ k'))
+                          (esym (ntt_half_size_eq k')) j) with
+        | inl i => @bitrev_state k' (fun t => v (@even_ord k' t)) i
+        | inr i => @bitrev_state k' (fun t => v (@odd_ord k' t)) i
+        end
+  end.
+
+Arguments bitrev_state _ _ _ : clear implicits.
+
+Lemma bitrev_state_left (k : nat) (v : 'I_(2 ^ k.+1) -> T) (i : 'I_(2 ^ k)) :
+  bitrev_state k.+1 v (@ntt_left_output k i) =
+  bitrev_state k (fun t => v (@even_ord k t)) i.
+Proof. by rewrite /= ntt_left_outputK. Qed.
+
+Lemma bitrev_state_right (k : nat) (v : 'I_(2 ^ k.+1) -> T) (i : 'I_(2 ^ k)) :
+  bitrev_state k.+1 v (@ntt_right_output k i) =
+  bitrev_state k (fun t => v (@odd_ord k t)) i.
+Proof. by rewrite /= ntt_right_outputK. Qed.
+
+End BitReverseState.
+
+(* ================================================================== *)
+(** * Exact negacyclic shared network                                 *)
+(* ================================================================== *)
+
+Section ExactNegacyclicSharedNetwork.
+
+Definition exact_ntt_merge_stage (stride k : nat) :
+    shared_stage ((2 ^ k) + (2 ^ k)) ntt_gate_tag :=
+  let N := 2 ^ k in
+  @SharedStage (N + N) ntt_gate_tag
+      (fun j =>
+        match split j with
+        | inl i => NTTGateTag k (stride * (val i).*2.+1) UpperBranch
+        | inr i => NTTGateTag k (stride * (val i).*2.+1) LowerBranch
+        end)
+      (fun j =>
+        match split j with
+        | inl i => lshift N i
+        | inr i => lshift N i
+        end)
+      (fun j =>
+        match split j with
+        | inl i => rshift N i
+        | inr i => rshift N i
+        end)
+      (N + N)%N
+      1.
+
+Fixpoint exact_ntt_shared_network_from (stride k : nat) :
+    shared_network (2 ^ k) ntt_gate_tag :=
+  match k return shared_network (2 ^ k) ntt_gate_tag with
+  | 0 => [::]
+  | k'.+1 =>
+      let N := 2 ^ k' in
+      let Heq : (N + N = 2 ^ k'.+1)%N :=
+        esym (etrans (expnS 2 k') (etrans (mul2n N) (esym (addnn N)))) in
+      let rec := exact_ntt_shared_network_from (stride.*2) k' in
+      eq_rect _ (fun p => shared_network p ntt_gate_tag)
+        (parallel_network rec rec ++
+         [:: exact_ntt_merge_stage stride k'])
+        _ Heq
+  end.
+
+Definition exact_ntt_shared_network (k : nat) :=
+  exact_ntt_shared_network_from 1 k.
+
+Lemma size_exact_ntt_shared_network_from (stride k : nat) :
+  size (exact_ntt_shared_network_from stride k) = k.
+Proof.
+elim: k stride => [|k' IH] stride //=.
+rewrite shared_network_eq_rect_size size_cat /=.
+by rewrite size_parallel_network_self IH addn1.
+Qed.
+
+Lemma size_exact_ntt_shared_network (k : nat) :
+  size (exact_ntt_shared_network k) = k.
+Proof. exact: size_exact_ntt_shared_network_from. Qed.
+
+End ExactNegacyclicSharedNetwork.
+
+Section ExactNegacyclicSharedSemantics.
+
+Variable R : ringType.
+Variable omega : R.
+
+Open Scope ring_scope.
+
+Fixpoint exact_ntt_shared_semantics_from (stride k : nat) :
+    ('I_(2 ^ k) -> R) -> 'I_(2 ^ k) -> R :=
+  match k return ('I_(2 ^ k) -> R) -> 'I_(2 ^ k) -> R with
+  | 0 => fun v _ => v ord0
+  | k'.+1 =>
+      let N := (2 ^ k')%N in
+      let Heq : (N + N = 2 ^ k'.+1)%N :=
+        esym (etrans (expnS 2 k') (etrans (mul2n N) (esym (addnn N)))) in
+      fun v j =>
+        let raw_state : 'I_(N + N) -> R :=
+          fun i => v (@cast_ord (N + N) (2 ^ k'.+1) Heq i) in
+        let left :=
+          exact_ntt_shared_semantics_from (stride.*2)
+            (fun i => raw_state (lshift N i)) in
+        let right :=
+          exact_ntt_shared_semantics_from (stride.*2)
+            (fun i => raw_state (rshift N i)) in
+        match split (@cast_ord (2 ^ k'.+1) (N + N) (esym Heq) j) with
+        | inl i => left i + ntt_twiddle omega (stride * (val i).*2.+1) * right i
+        | inr i => left i - ntt_twiddle omega (stride * (val i).*2.+1) * right i
+        end
+  end.
+
+Definition exact_ntt_shared_semantics (k : nat) :
+    ('I_(2 ^ k) -> R) -> 'I_(2 ^ k) -> R :=
+  fun v j => exact_ntt_shared_semantics_from 1 v j.
+
+Arguments exact_ntt_shared_semantics _ _ _ : clear implicits.
+
+Theorem exact_ntt_shared_network_from_correct
+    (stride k : nat) (v : 'I_(2 ^ k) -> R) (j : 'I_(2 ^ k)) :
+  eval_network (ntt_gate_semantics omega) (exact_ntt_shared_network_from stride k) v j =
+  exact_ntt_shared_semantics_from stride v j.
+Proof.
+elim: k stride v j => [|k' IH] stride v j /=.
+- by rewrite (ord1 j).
+- pose N := (2 ^ k')%N.
+  pose Heq : (N + N = 2 ^ k'.+1)%N :=
+    esym (etrans (expnS 2 k') (etrans (mul2n N) (esym (addnn N)))).
+  pose raw_net :=
+    parallel_network (exact_ntt_shared_network_from stride.*2 k')
+                     (exact_ntt_shared_network_from stride.*2 k') ++
+    [:: exact_ntt_merge_stage stride k'].
+  pose raw_state : 'I_(N + N) -> R :=
+    fun i => v (@cast_ord (N + N) (2 ^ k'.+1) Heq i).
+  pose raw_j : 'I_(N + N) :=
+    @cast_ord (2 ^ k'.+1) (N + N) (esym Heq) j.
+  have Hstate :
+      forall j0 : 'I_(2 ^ k'.+1),
+        raw_state (@cast_ord (2 ^ k'.+1) (N + N) (esym Heq) j0) = v j0.
+    by move=> j0; rewrite /raw_state cast_ordKV.
+  have Hj : @cast_ord (N + N) (2 ^ k'.+1) Heq raw_j = j.
+    by rewrite /raw_j cast_ordKV.
+  have Hraw :
+      eval_network (ntt_gate_semantics omega)
+        (exact_ntt_shared_network_from stride k'.+1) v j =
+      eval_network (ntt_gate_semantics omega) raw_net raw_state raw_j.
+    have Hstate_eq :
+        eval_network (ntt_gate_semantics omega)
+          (exact_ntt_shared_network_from stride k'.+1) v j =
+        eval_network (ntt_gate_semantics omega)
+          (exact_ntt_shared_network_from stride k'.+1)
+          (fun j0 : 'I_(2 ^ k'.+1) =>
+             raw_state (@cast_ord (2 ^ k'.+1) (N + N) (esym Heq) j0)) j.
+      apply: eval_network_state_eq => j0.
+      exact: esym (Hstate j0).
+    have Hraw0 :=
+      @eval_shared_network_eq_rect
+        (N + N) (2 ^ k'.+1) ntt_gate_tag R
+        (ntt_gate_semantics omega) raw_net Heq raw_state raw_j.
+    rewrite Hj in Hraw0.
+    exact: eq_trans Hstate_eq Hraw0.
+  have Hjoin :
+      forall j0 : 'I_(N + N),
+        raw_state j0 =
+        join_halves (fun t => raw_state (lshift N t))
+                    (fun t => raw_state (rshift N t)) j0.
+    move=> j0; rewrite /join_halves.
+    case Hs: (split j0) => [i|i].
+    - by move: (splitK j0); rewrite Hs /= => <-.
+    - by move: (splitK j0); rewrite Hs /= => <-.
+  rewrite Hraw /raw_net eval_network_cat /= /exact_ntt_shared_semantics_from /= /raw_j.
+  case Hs: (split (@cast_ord (2 ^ k'.+1) (N + N) (esym Heq) j)) => [i|i] /=.
+  + rewrite /eval_stage /exact_ntt_merge_stage /ntt_gate_semantics /= Hs /=.
+    have Hstate_join_l :
+        eval_network (ntt_gate_semantics omega)
+            (parallel_network (exact_ntt_shared_network_from stride.*2 k')
+                              (exact_ntt_shared_network_from stride.*2 k'))
+            raw_state (lshift N i) =
+        eval_network (ntt_gate_semantics omega)
+            (parallel_network (exact_ntt_shared_network_from stride.*2 k')
+                              (exact_ntt_shared_network_from stride.*2 k'))
+            (join_halves (fun t => raw_state (lshift N t))
+                         (fun t => raw_state (rshift N t))) (lshift N i).
+      apply: eval_network_state_eq => t.
+      exact: Hjoin.
+    have Hstate_join_r :
+        eval_network (ntt_gate_semantics omega)
+            (parallel_network (exact_ntt_shared_network_from stride.*2 k')
+                              (exact_ntt_shared_network_from stride.*2 k'))
+            raw_state (rshift N i) =
+        eval_network (ntt_gate_semantics omega)
+            (parallel_network (exact_ntt_shared_network_from stride.*2 k')
+                              (exact_ntt_shared_network_from stride.*2 k'))
+            (join_halves (fun t => raw_state (lshift N t))
+                         (fun t => raw_state (rshift N t))) (rshift N i).
+      apply: eval_network_state_eq => t.
+      exact: Hjoin.
+    rewrite Hstate_join_l Hstate_join_r.
+    rewrite eval_parallel_network_lshift eval_parallel_network_rshift.
+    by rewrite (IH stride.*2 (fun t => raw_state (lshift N t)) i)
+               (IH stride.*2 (fun t => raw_state (rshift N t)) i).
+  + rewrite /eval_stage /exact_ntt_merge_stage /ntt_gate_semantics /= Hs /=.
+    have Hstate_join_l :
+        eval_network (ntt_gate_semantics omega)
+            (parallel_network (exact_ntt_shared_network_from stride.*2 k')
+                              (exact_ntt_shared_network_from stride.*2 k'))
+            raw_state (lshift N i) =
+        eval_network (ntt_gate_semantics omega)
+            (parallel_network (exact_ntt_shared_network_from stride.*2 k')
+                              (exact_ntt_shared_network_from stride.*2 k'))
+            (join_halves (fun t => raw_state (lshift N t))
+                         (fun t => raw_state (rshift N t))) (lshift N i).
+      apply: eval_network_state_eq => t.
+      exact: Hjoin.
+    have Hstate_join_r :
+        eval_network (ntt_gate_semantics omega)
+            (parallel_network (exact_ntt_shared_network_from stride.*2 k')
+                              (exact_ntt_shared_network_from stride.*2 k'))
+            raw_state (rshift N i) =
+        eval_network (ntt_gate_semantics omega)
+            (parallel_network (exact_ntt_shared_network_from stride.*2 k')
+                              (exact_ntt_shared_network_from stride.*2 k'))
+            (join_halves (fun t => raw_state (lshift N t))
+                         (fun t => raw_state (rshift N t))) (rshift N i).
+      apply: eval_network_state_eq => t.
+      exact: Hjoin.
+    rewrite Hstate_join_l Hstate_join_r.
+    rewrite eval_parallel_network_lshift eval_parallel_network_rshift.
+    by rewrite (IH stride.*2 (fun t => raw_state (lshift N t)) i)
+               (IH stride.*2 (fun t => raw_state (rshift N t)) i).
+Qed.
+
+Theorem exact_ntt_shared_network_correct
+    (k : nat) (v : 'I_(2 ^ k) -> R) (j : 'I_(2 ^ k)) :
+  eval_network (ntt_gate_semantics omega) (exact_ntt_shared_network k) v j =
+  @exact_ntt_shared_semantics k v j.
+Proof. exact: exact_ntt_shared_network_from_correct. Qed.
+
+Definition exact_ntt_shared_circuit (k : nat) :
+    circuit (2 ^ k) ntt_gate_tag :=
+  network_circuit (exact_ntt_shared_network k).
+
+Theorem exact_ntt_shared_circuit_correct
+    (k : nat) (v : 'I_(2 ^ k) -> R) (j : 'I_(2 ^ k)) :
+  eval (ntt_gate_semantics omega) v (exact_ntt_shared_circuit k j) =
+  @exact_ntt_shared_semantics k v j.
+Proof.
+rewrite /exact_ntt_shared_circuit network_circuit_eval.
+exact: exact_ntt_shared_network_correct.
+Qed.
+
+End ExactNegacyclicSharedSemantics.
+
+(* ================================================================== *)
 (** * Shared-network complexity laws                                  *)
 (* ================================================================== *)
 
@@ -1260,6 +1627,56 @@ Lemma ntt_shared_network_span (k : nat) :
 Proof. by rewrite network_cycles_asap ntt_shared_network_latency_sum. Qed.
 
 End NTTSharedComplexity.
+
+Section ExactNTTSharedComplexity.
+
+Lemma exact_ntt_shared_network_work_from (stride k : nat) :
+  network_work (exact_ntt_shared_network_from stride k) = k * 2 ^ k.
+Proof.
+rewrite network_workE size_exact_ntt_shared_network_from.
+by rewrite mulnC.
+Qed.
+
+Lemma exact_ntt_shared_network_work (k : nat) :
+  network_work (exact_ntt_shared_network k) = k * 2 ^ k.
+Proof. exact: exact_ntt_shared_network_work_from. Qed.
+
+Lemma exact_ntt_shared_network_word_traffic_eq_work_from (stride k : nat) :
+  network_word_traffic (exact_ntt_shared_network_from stride k) =
+  network_work (exact_ntt_shared_network_from stride k).
+Proof.
+elim: k stride => [|k' IH] stride //=.
+rewrite shared_network_eq_rect_word_traffic shared_network_eq_rect_work.
+rewrite !network_word_traffic_cat !network_work_cat /=.
+rewrite parallel_network_word_traffic_self parallel_network_work_self IH.
+by rewrite /exact_ntt_merge_stage /=.
+Qed.
+
+Lemma exact_ntt_shared_network_word_traffic (k : nat) :
+  network_word_traffic (exact_ntt_shared_network k) = k * 2 ^ k.
+Proof.
+by rewrite exact_ntt_shared_network_word_traffic_eq_work_from
+           exact_ntt_shared_network_work.
+Qed.
+
+Lemma exact_ntt_shared_network_latency_sum_from (stride k : nat) :
+  network_latency_sum (exact_ntt_shared_network_from stride k) = k.
+Proof.
+elim: k stride => [|k' IH] stride //=.
+rewrite shared_network_eq_rect_latency_sum network_latency_sum_cat /=.
+by rewrite parallel_network_latency_sum_self IH addn1.
+Qed.
+
+Lemma exact_ntt_shared_network_latency_sum (k : nat) :
+  network_latency_sum (exact_ntt_shared_network k) = k.
+Proof. exact: exact_ntt_shared_network_latency_sum_from. Qed.
+
+Lemma exact_ntt_shared_network_span (k : nat) :
+  network_cycles (exact_ntt_shared_network k)
+                 (asap_schedule (exact_ntt_shared_network k)) = k.
+Proof. by rewrite network_cycles_asap exact_ntt_shared_network_latency_sum. Qed.
+
+End ExactNTTSharedComplexity.
 
 (* ================================================================== *)
 (** * Butterfly circuit construction                                    *)
@@ -1502,7 +1919,7 @@ Qed.
 End VandermondeDep.
 
 (* ================================================================== *)
-(** * FHE bootstrapping: self-contained depth bound                    *)
+(** * Proxy lower-bound packaging for bootstrapping                    *)
 (* ================================================================== *)
 
 (** [fhe_params] bundles the coefficient ring, dimension exponent,
@@ -1527,9 +1944,6 @@ Record negacyclic_root_data := NegacyclicRootData {
   ngr_omega_unit : ngr_omega \is a GRing.unit;
   ngr_order : ngr_omega ^+ (2 ^ (ngr_exp.+1)) = 1;
   ngr_half_turn : ngr_omega ^+ (2 ^ ngr_exp) = -1;
-  ngr_primitive :
-    forall m : nat, (0 < m)%N -> (m < 2 ^ (ngr_exp.+1))%N ->
-      ngr_omega ^+ m != 1;
 }.
 
 Definition ngr_dim (p : negacyclic_root_data) : nat := (2 ^ ngr_exp p)%N.
@@ -1552,11 +1966,6 @@ Proof. exact: ngr_order. Qed.
 Lemma ngr_half_turn_law (p : negacyclic_root_data) :
   ngr_omega p ^+ ngr_dim p = -1 :> ngr_ring p.
 Proof. exact: ngr_half_turn. Qed.
-
-Lemma ngr_primitive_law (p : negacyclic_root_data) (m : nat) :
-  (0 < m)%N -> (m < ngr_order_modulus p)%N ->
-  ngr_omega p ^+ m != 1 :> ngr_ring p.
-Proof. exact: ngr_primitive. Qed.
 
 Theorem negacyclic_shared_ntt_depth_bound (p : negacyclic_root_data) :
   (ngr_exp p <= circ_depth (ntt_shared_circuit (ngr_exp p)))%N.
@@ -1648,7 +2057,7 @@ Proof. by rewrite negacyclic_origin_point_dim addNr. Qed.
 End NegacyclicQuotientEvaluation.
 
 (* ================================================================== *)
-(** * End-to-end bootstrapping operator                               *)
+(** * Abstract bootstrapping operator shell                           *)
 (* ================================================================== *)
 
 Section BootstrappingOperator.
@@ -2444,7 +2853,7 @@ Qed.
 End AsapMachineAchievability.
 
 (* ================================================================== *)
-(** * Concrete instantiation: N = 2^16                                 *)
+(** * Concrete 2^16 specializations plus toy N = 2 witness             *)
 (* ================================================================== *)
 
 Lemma concrete_span_bound (G : Type) :
@@ -2520,8 +2929,7 @@ Definition z5_negacyclic_root : negacyclic_root_data :=
      ngr_omega := z5_omega;
      ngr_omega_unit := z5_omega_unit;
      ngr_order := z5_omega_order;
-     ngr_half_turn := z5_omega_half_turn;
-     ngr_primitive := z5_omega_primitive |}.
+     ngr_half_turn := z5_omega_half_turn |}.
 
 Lemma z5_shared_ntt_depth_bound :
   (1 <= circ_depth (ntt_shared_circuit 1))%N.

@@ -1,11 +1,13 @@
 opam-version: "2.0"
 name: "coq-bootstrapping-verified"
 version: "dev"
-synopsis: "Verified irreducibility of FHE bootstrapping circuit depth"
+synopsis: "Fan-in-2 depth lower bounds and staged shared-network transforms for bootstrapping"
 description: """
-Machine-checked proof that any fan-in-2 circuit computing the NTT
-over cyclotomic rings Z[X]/(X^N+1) with N = 2^k has depth at least k.
-Formalized over MathComp's algebraic hierarchy with zero axioms.
+Machine-checked formalization of fan-in-2 full-dependence lower bounds,
+staged shared-network transforms, circuit compilation, abstract
+bootstrapping shells, and execution-model corollaries over MathComp's
+algebraic hierarchy, structured by the theorem program recorded in
+TODO.md.
 """
 maintainer: "Charles C. Norton <machineelv@gmail.com>"
 authors: ["Charles C. Norton"]
@@ -15,10 +17,10 @@ bug-reports: "https://github.com/CharlesCNorton/bootstrapping-verified/issues"
 dev-repo: "git+https://github.com/CharlesCNorton/bootstrapping-verified.git"
 
 depends: [
-  "rocq-core" {>= "9.0" & < "9.1~"}
-  "coq-mathcomp-ssreflect" {>= "2.5"}
-  "coq-mathcomp-algebra" {>= "2.5"}
-  "coq-mathcomp-reals" {>= "2.5"}
+  "rocq-core" {= "9.0.0"}
+  "coq-mathcomp-ssreflect" {= "2.5.0"}
+  "coq-mathcomp-algebra" {= "2.5.0"}
+  "coq-mathcomp-reals" {= "1.15.0"}
 ]
 
 build: [
