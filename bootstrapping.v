@@ -2825,6 +2825,52 @@ Lemma negacyclic_origin_point_annihilates_quotient :
     :> ngr_ring p.
 Proof. by rewrite negacyclic_origin_point_dim addNr. Qed.
 
+Lemma negacyclic_quotient_zero (j : 'I_(ngr_dim p)) :
+  negacyclic_quotient_eval (fun _ : 'I_(ngr_dim p) => 0) j = 0.
+Proof.
+rewrite /negacyclic_quotient_eval.
+apply: big1 => i _.
+by rewrite mul0r.
+Qed.
+
+Lemma negacyclic_quotient_basis (i j : 'I_(ngr_dim p)) :
+  negacyclic_quotient_eval
+      (fun k : 'I_(ngr_dim p) => if k == i then 1 else 0) j =
+  negacyclic_eval_point j ^+ val i.
+Proof.
+rewrite /negacyclic_quotient_eval (bigD1 i) //= eqxx mul1r.
+rewrite big1 ?addr0 // => k Hki.
+by rewrite (negbTE Hki) mul0r.
+Qed.
+
+Theorem negacyclic_quotient_full_dep :
+  func_full_dep (n := ngr_dim p) negacyclic_quotient_eval.
+Proof.
+move=> j i.
+exists (fun _ : 'I_(ngr_dim p) => 0),
+       (fun k : 'I_(ngr_dim p) => if k == i then 1 else 0).
+split.
+- move=> k Hki.
+  by rewrite (negbTE Hki).
+- rewrite negacyclic_quotient_zero negacyclic_quotient_basis => H.
+  have Hu : negacyclic_eval_point j ^+ val i \is a GRing.unit.
+    exact: unitrX (negacyclic_eval_point_unit j).
+  move: Hu; rewrite -H => Hu.
+  by rewrite unitr0 in Hu.
+Qed.
+
+Theorem negacyclic_quotient_depth_bound
+    (G : Type)
+    (ops : G -> ngr_ring p -> ngr_ring p -> ngr_ring p)
+    (C : circuit (ngr_dim p) G)
+    (Hcomp : forall v j, negacyclic_quotient_eval v j = eval ops v (C j)) :
+  (ngr_exp p <= circ_depth C)%N.
+Proof.
+have Hfull : full_dependence C :=
+  func_dep_implies_circ_dep Hcomp negacyclic_quotient_full_dep.
+exact: full_dep_depth_bound (erefl _) Hfull.
+Qed.
+
 End NegacyclicQuotientEvaluation.
 
 (* ================================================================== *)
