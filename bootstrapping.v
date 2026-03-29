@@ -178,7 +178,65 @@ apply: Hagree; apply: contraNneq Hi => <-.
 by rewrite Hj.
 Qed.
 
+Lemma eval_state_eq (v1 v2 : 'I_n -> T) (g : gate) :
+  (forall i, v1 i = v2 i) -> eval v1 g = eval v2 g.
+Proof.
+move=> Heq.
+apply: reach_agree => i _.
+exact: Heq.
+Qed.
+
 End GateEval.
+
+Fixpoint subst_gate (Cin : circuit) (g : gate) : gate :=
+  match g with
+  | CInput i => Cin i
+  | CGate tag g1 g2 => CGate tag (subst_gate Cin g1) (subst_gate Cin g2)
+  end.
+
+Definition subst_circuit (Cout Cin : circuit) : circuit :=
+  [ffun j => subst_gate Cin (Cout j)].
+
+Section CircuitSubstitution.
+
+Variable T : Type.
+Variable ops : O -> T -> T -> T.
+
+Lemma eval_subst_gate (v : 'I_n -> T) (Cin : circuit) (g : gate) :
+  eval ops v (subst_gate Cin g) = eval ops (fun i => eval ops v (Cin i)) g.
+Proof.
+elim: g => [i|tag g1 IH1 g2 IH2] /=.
+- by [].
+- by rewrite IH1 IH2.
+Qed.
+
+Lemma eval_subst_circuit
+    (v : 'I_n -> T) (Cout Cin : circuit) (j : 'I_n) :
+  eval ops v (subst_circuit Cout Cin j) =
+  eval ops (fun i => eval ops v (Cin i)) (Cout j).
+Proof. by rewrite /subst_circuit ffunE eval_subst_gate. Qed.
+
+End CircuitSubstitution.
+
+Lemma depth_subst_gate (Cin : circuit) (d : nat) (g : gate) :
+  (forall i, depth (Cin i) = d) ->
+  depth (subst_gate Cin g) = depth g + d.
+Proof.
+move=> Hdepth.
+elim: g => [i|tag g1 IH1 g2 IH2] /=.
+- by rewrite Hdepth add0n.
+- by rewrite IH1 ?IH2 // addSn -addn_maxl.
+Qed.
+
+Lemma circ_depth_subst_circuit0 (Cout Cin : circuit) :
+  (forall i, depth (Cin i) = 0) ->
+  circ_depth (subst_circuit Cout Cin) = circ_depth Cout.
+Proof.
+move=> Hdepth.
+rewrite /circ_depth /subst_circuit.
+apply: eq_bigr => j _.
+by rewrite ffunE (@depth_subst_gate Cin 0 (Cout j)) // addn0.
+Qed.
 
 (** ** Functional full dependence implies circuit full dependence *)
 
@@ -1289,6 +1347,10 @@ Lemma bitrev_input_circuit_eval
 Proof. by rewrite /bitrev_input_circuit ffunE /= bitrev_stateE. Qed.
 
 End BitReverseInputCircuitEval.
+
+Lemma bitrev_input_circuit_gate_depth (j : 'I_(2 ^ k)) :
+  depth (bitrev_input_circuit j) = 0.
+Proof. by rewrite /bitrev_input_circuit ffunE. Qed.
 
 End BitReverseInputCircuit.
 
@@ -2639,10 +2701,12 @@ elim: k stride v j Horder Hhalf => [|k IH] stride v j Horder Hhalf /=.
     have Hright :
         ngr_omega p ^+ (stride * (2 * val (@ntt_right_output k i) + 1)) = - x.
       rewrite val_ntt_right_output /x.
+      have Hshift : (2 ^ k + val i = val i + 2 ^ k)%N.
+        by rewrite addnC.
       have -> :
           (stride * (2 * (2 ^ k + val i) + 1) =
            stride * (2 * val i + 1) + stride * (2 ^ k.+1))%N.
-        rewrite [2 ^ k + val i]addnC expnS -mulnDr.
+        rewrite Hshift expnS -mulnDr.
         congr (stride * _)%N.
         by rewrite mulnDr addnAC.
       by rewrite exprD Hhalf mulrN1.
@@ -2661,19 +2725,40 @@ elim: k stride v j Horder Hhalf => [|k IH] stride v j Horder Hhalf /=.
       by rewrite -Hx2.
     rewrite /ntt_twiddle /x.
     rewrite Hright.
+    have Hiodd : i.*2.+1 = 2 * val i + 1.
+      have -> : 2 * val i + 1 = (2 * val i).+1.
+        exact: addn1.
+      by rewrite -muln2 mulnC.
+    have -> : ngr_omega p ^+ (stride * i.*2.+1) = x.
+      by rewrite /x Hiodd.
+    have -> :
+        coeff_eval_at (ngr_omega p ^+ (stride * (2 * val i + 1)) ^+ 2)
+          (fun t => v (@even_ord k t)) =
+        coeff_eval_at (x ^+ 2) (fun t => v (@even_ord k t)).
+      by rewrite /x.
+    have -> :
+        coeff_eval_at (ngr_omega p ^+ (stride * (2 * val i + 1)) ^+ 2)
+          (fun t => v (@odd_ord k t)) =
+        coeff_eval_at (x ^+ 2) (fun t => v (@odd_ord k t)).
+      by rewrite /x.
     symmetry.
     rewrite coeff_eval_at_split Hneg2.
-    by rewrite mulrN.
+    by rewrite mulNr.
 Qed.
 
 Theorem negacyclic_recursive_eval_closed_form
     (v : 'I_(ngr_dim p) -> ngr_ring p) (j : 'I_(ngr_dim p)) :
   negacyclic_recursive_eval v j = negacyclic_quotient_eval v j.
 Proof.
-rewrite /negacyclic_recursive_eval /negacyclic_quotient_eval.
-apply: (@exact_ntt_bitrev_eval_closed_form (ngr_exp p) 1 v j).
-- by rewrite mul1n.
-- by rewrite mul1n.
+rewrite /negacyclic_recursive_eval /negacyclic_quotient_eval /negacyclic_eval_point /coeff_eval_at.
+have Horder1 : ngr_omega p ^+ (1 * 2 ^ (ngr_exp p).+1) = 1.
+  by rewrite mul1n ngr_order.
+have Hhalf1 : ngr_omega p ^+ (1 * 2 ^ ngr_exp p) = -1.
+  by rewrite mul1n ngr_half_turn.
+have Hclosed :=
+    @exact_ntt_bitrev_eval_closed_form (ngr_exp p) 1 v j Horder1 Hhalf1.
+rewrite /coeff_eval_at mul1n in Hclosed.
+exact Hclosed.
 Qed.
 
 Theorem exact_negacyclic_operator_quotient_on_bitrev
@@ -2682,6 +2767,36 @@ Theorem exact_negacyclic_operator_quotient_on_bitrev
   negacyclic_quotient_eval v j.
 Proof.
 by rewrite exact_negacyclic_operator_on_bitrev negacyclic_recursive_eval_closed_form.
+Qed.
+
+Theorem negacyclic_quotient_circuit_from_exact
+    (G : Type)
+    (ops : G -> ngr_ring p -> ngr_ring p -> ngr_ring p)
+    (C : circuit (ngr_dim p) G)
+    (Hcomp : forall v j, exact_negacyclic_operator v j = eval ops v (C j))
+    (v : 'I_(ngr_dim p) -> ngr_ring p) (j : 'I_(ngr_dim p)) :
+  negacyclic_quotient_eval v j =
+  eval ops v (subst_circuit C (@bitrev_input_circuit (ngr_exp p) G) j).
+Proof.
+rewrite -exact_negacyclic_operator_quotient_on_bitrev.
+rewrite eval_subst_circuit.
+rewrite -Hcomp.
+have Hstate :
+    (fun i => eval ops v (@bitrev_input_circuit (ngr_exp p) G i)) =
+    @bitrev_state (ngr_ring p) (ngr_exp p) v.
+  apply: boolp.functional_extensionality_dep => i.
+  exact: bitrev_input_circuit_eval.
+by rewrite Hstate.
+Qed.
+
+Theorem negacyclic_quotient_circuit_from_exact_depth
+    (G : Type)
+    (C : circuit (ngr_dim p) G) :
+  circ_depth (subst_circuit C (@bitrev_input_circuit (ngr_exp p) G)) =
+  circ_depth C.
+Proof.
+rewrite circ_depth_subst_circuit0 => // i.
+exact: bitrev_input_circuit_gate_depth.
 Qed.
 
 Definition negacyclic_origin_index : 'I_(ngr_dim p) :=
