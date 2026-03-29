@@ -394,6 +394,10 @@ Lemma cast_ordVK (m n : nat) (Heq : m = n) (i : 'I_m) :
   @cast_ord n m (esym Heq) (@cast_ord m n Heq i) = i.
 Proof. by subst. Qed.
 
+Lemma val_cast_ord (m n : nat) (Heq : m = n) (i : 'I_m) :
+  val (@cast_ord m n Heq i) = val i.
+Proof. by subst. Qed.
+
 Lemma split_lshift_eq (m n : nat) (i : 'I_m) :
   split (lshift n i) = inl i.
 Proof.
@@ -407,6 +411,14 @@ Proof.
 apply: (can_inj unsplitK).
 by rewrite splitK.
 Qed.
+
+Lemma val_lshift (m n : nat) (i : 'I_m) :
+  val (lshift n i) = val i.
+Proof. by []. Qed.
+
+Lemma val_rshift (m n : nat) (i : 'I_n) :
+  val (rshift m i) = m + val i.
+Proof. by []. Qed.
 
 Section ParallelSharedEval.
 
@@ -882,10 +894,18 @@ Lemma ntt_left_outputK (k : nat) (i : 'I_(2 ^ k)) :
                    (esym (ntt_half_size_eq k)) (ntt_left_output k i)) = inl i.
 Proof. by rewrite /ntt_left_output cast_ordVK split_lshift_eq. Qed.
 
+Lemma val_ntt_left_output (k : nat) (i : 'I_(2 ^ k)) :
+  val (ntt_left_output k i) = val i.
+Proof. by rewrite /ntt_left_output val_cast_ord val_lshift. Qed.
+
 Lemma ntt_right_outputK (k : nat) (i : 'I_(2 ^ k)) :
   split (@cast_ord (2 ^ k.+1) ((2 ^ k) + (2 ^ k))
                    (esym (ntt_half_size_eq k)) (ntt_right_output k i)) = inr i.
 Proof. by rewrite /ntt_right_output cast_ordVK split_rshift_eq. Qed.
+
+Lemma val_ntt_right_output (k : nat) (i : 'I_(2 ^ k)) :
+  val (ntt_right_output k i) = (2 ^ k + val i)%N.
+Proof. by rewrite /ntt_right_output val_cast_ord val_rshift. Qed.
 
 Lemma ntt_left_outputP (k : nat) (j : 'I_(2 ^ k.+1)) (i : 'I_(2 ^ k)) :
   split (@cast_ord (2 ^ k.+1) ((2 ^ k) + (2 ^ k))
@@ -1206,6 +1226,31 @@ Fixpoint bitrev_state (k : nat) : ('I_(2 ^ k) -> T) -> 'I_(2 ^ k) -> T :=
 
 Arguments bitrev_state _ _ _ : clear implicits.
 
+Fixpoint bitrev_ord (k : nat) : 'I_(2 ^ k) -> 'I_(2 ^ k) :=
+  match k return 'I_(2 ^ k) -> 'I_(2 ^ k) with
+  | 0 => fun i => i
+  | k'.+1 =>
+      fun j =>
+        match split (@cast_ord (2 ^ k'.+1) ((2 ^ k') + (2 ^ k'))
+                          (esym (ntt_half_size_eq k')) j) with
+        | inl i => @even_ord k' (@bitrev_ord k' i)
+        | inr i => @odd_ord k' (@bitrev_ord k' i)
+        end
+  end.
+
+Arguments bitrev_ord _ _ : clear implicits.
+
+Lemma bitrev_stateE (k : nat) (v : 'I_(2 ^ k) -> T) (j : 'I_(2 ^ k)) :
+  bitrev_state k v j = v (bitrev_ord k j).
+Proof.
+elim: k v j => [|k IH] v j /=.
+- by rewrite (ord1 j).
+- case Hs: (split (@cast_ord (2 ^ k.+1) ((2 ^ k) + (2 ^ k))
+                            (esym (ntt_half_size_eq k)) j)) => [i|i] /=.
+  + by rewrite IH.
+  + by rewrite IH.
+Qed.
+
 Lemma bitrev_state_left (k : nat) (v : 'I_(2 ^ k.+1) -> T) (i : 'I_(2 ^ k)) :
   bitrev_state k.+1 v (@ntt_left_output k i) =
   bitrev_state k (fun t => v (@even_ord k t)) i.
@@ -1217,6 +1262,27 @@ Lemma bitrev_state_right (k : nat) (v : 'I_(2 ^ k.+1) -> T) (i : 'I_(2 ^ k)) :
 Proof. by rewrite /= ntt_right_outputK. Qed.
 
 End BitReverseState.
+
+Section BitReverseInputCircuit.
+
+Variables (k : nat) (O : Type).
+
+Definition bitrev_input_circuit : circuit (2 ^ k) O :=
+  [ffun j => @CInput (2 ^ k) O (@bitrev_ord k j)].
+
+Section BitReverseInputCircuitEval.
+
+Variable T : Type.
+Variable ops : O -> T -> T -> T.
+
+Lemma bitrev_input_circuit_eval
+    (v : 'I_(2 ^ k) -> T) (j : 'I_(2 ^ k)) :
+  eval ops v (bitrev_input_circuit j) = @bitrev_state T k v j.
+Proof. by rewrite /bitrev_input_circuit ffunE /= bitrev_stateE. Qed.
+
+End BitReverseInputCircuitEval.
+
+End BitReverseInputCircuit.
 
 (* ================================================================== *)
 (** * Exact negacyclic shared network                                 *)
@@ -1927,7 +1993,7 @@ End VandermondeDep.
     drives the depth bound via the Vandermonde non-vanishing argument. *)
 
 Record fhe_params := FHEParams {
-  fhe_ring : GRing.UnitRing.type;
+  fhe_ring : GRing.ComUnitRing.type;
   ring_exp : nat;
   fhe_omega : fhe_ring;
   fhe_omega_unit : fhe_omega \is a GRing.unit;
@@ -1938,7 +2004,7 @@ Definition ring_dim (p : fhe_params) : nat := (2 ^ ring_exp p)%N.
 Local Open Scope ring_scope.
 
 Record negacyclic_root_data := NegacyclicRootData {
-  ngr_ring : GRing.UnitRing.type;
+  ngr_ring : GRing.ComUnitRing.type;
   ngr_exp : nat;
   ngr_omega : ngr_ring;
   ngr_omega_unit : ngr_omega \is a GRing.unit;
