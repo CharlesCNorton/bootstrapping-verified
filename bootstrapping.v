@@ -1771,6 +1771,112 @@ Qed.
 
 End ExactNTTSharedDependence.
 
+Section ExactBitReversedEvaluation.
+
+Variable R : GRing.UnitRing.type.
+Variable omega : R.
+
+Open Scope ring_scope.
+
+Fixpoint exact_ntt_bitrev_eval (k : nat) :
+    nat -> ('I_(2 ^ k) -> R) -> 'I_(2 ^ k) -> R :=
+  match k return nat -> ('I_(2 ^ k) -> R) -> 'I_(2 ^ k) -> R with
+  | 0 => fun _ v _ => v ord0
+  | n.+1 =>
+      let rec := @exact_ntt_bitrev_eval n in
+      fun stride v j =>
+        match split (@cast_ord (2 ^ n.+1) ((2 ^ n) + (2 ^ n))
+                          (esym (ntt_half_size_eq n)) j) with
+        | inl i =>
+            rec (stride.*2) (fun t => v (@even_ord n t)) i +
+            ntt_twiddle omega (stride * (val i).*2.+1) *
+            rec (stride.*2) (fun t => v (@odd_ord n t)) i
+        | inr i =>
+            rec (stride.*2) (fun t => v (@even_ord n t)) i -
+            ntt_twiddle omega (stride * (val i).*2.+1) *
+            rec (stride.*2) (fun t => v (@odd_ord n t)) i
+        end
+  end.
+
+Lemma exact_ntt_shared_semantics_from_state_eq
+    (stride k : nat) (v1 v2 : 'I_(2 ^ k) -> R) (j : 'I_(2 ^ k)) :
+  (forall t, v1 t = v2 t) ->
+  @exact_ntt_shared_semantics_from R omega stride k v1 j =
+  @exact_ntt_shared_semantics_from R omega stride k v2 j.
+Proof.
+move=> Heq.
+rewrite -(@exact_ntt_shared_network_from_correct R omega stride k v1 j).
+rewrite -(@exact_ntt_shared_network_from_correct R omega stride k v2 j).
+apply: eval_network_state_eq => t.
+exact: Heq.
+Qed.
+
+Theorem exact_ntt_shared_semantics_from_bitrev
+    (stride k : nat) (v : 'I_(2 ^ k) -> R) (j : 'I_(2 ^ k)) :
+  @exact_ntt_shared_semantics_from R omega stride k (@bitrev_state R k v) j =
+  @exact_ntt_bitrev_eval k stride v j.
+Proof.
+elim: k stride v j => [|k IH] stride v j /=.
+- by [].
+- have Hjoin :
+      forall t : 'I_(2 ^ k.+1),
+        @bitrev_state R k.+1 v t =
+        exact_join_state
+          (@bitrev_state R k (fun s => v (@even_ord k s)))
+          (@bitrev_state R k (fun s => v (@odd_ord k s))) t.
+    move=> t.
+    case Hs: (split (@cast_ord (2 ^ k.+1) ((2 ^ k) + (2 ^ k))
+                              (esym (ntt_half_size_eq k)) t)) => [i|i].
+    + have -> : t = @ntt_left_output k i by exact: ntt_left_outputP Hs.
+      by rewrite bitrev_state_left exact_join_state_left.
+    + have -> : t = @ntt_right_output k i by exact: ntt_right_outputP Hs.
+      by rewrite bitrev_state_right exact_join_state_right.
+    case Hj: (split (@cast_ord (2 ^ k.+1) ((2 ^ k) + (2 ^ k))
+                               (esym (ntt_half_size_eq k)) j)) => [i|i] /=.
+    + have Hbranch :
+          @exact_ntt_shared_semantics_from R omega stride k.+1
+              (@bitrev_state R k.+1 v) (@ntt_left_output k i) =
+          @exact_ntt_bitrev_eval k.+1 stride v (@ntt_left_output k i).
+        have -> :
+            @exact_ntt_shared_semantics_from R omega stride k.+1
+                (@bitrev_state R k.+1 v) (@ntt_left_output k i) =
+            @exact_ntt_shared_semantics_from R omega stride k.+1
+                (exact_join_state
+                   (@bitrev_state R k (fun s => v (@even_ord k s)))
+                   (@bitrev_state R k (fun s => v (@odd_ord k s))))
+                (@ntt_left_output k i).
+          apply: exact_ntt_shared_semantics_from_state_eq => t.
+          exact: Hjoin.
+        rewrite exact_ntt_shared_semantics_from_join_upper /=.
+        by rewrite !ntt_left_outputK IH IH.
+      by move: Hbranch; rewrite /= ntt_left_outputK.
+    + have Hbranch :
+          @exact_ntt_shared_semantics_from R omega stride k.+1
+              (@bitrev_state R k.+1 v) (@ntt_right_output k i) =
+          @exact_ntt_bitrev_eval k.+1 stride v (@ntt_right_output k i).
+        have -> :
+            @exact_ntt_shared_semantics_from R omega stride k.+1
+                (@bitrev_state R k.+1 v) (@ntt_right_output k i) =
+            @exact_ntt_shared_semantics_from R omega stride k.+1
+                (exact_join_state
+                   (@bitrev_state R k (fun s => v (@even_ord k s)))
+                   (@bitrev_state R k (fun s => v (@odd_ord k s))))
+                (@ntt_right_output k i).
+          apply: exact_ntt_shared_semantics_from_state_eq => t.
+          exact: Hjoin.
+        rewrite exact_ntt_shared_semantics_from_join_lower /=.
+        by rewrite !ntt_right_outputK IH IH.
+      by move: Hbranch; rewrite /= ntt_right_outputK.
+Qed.
+
+Theorem exact_ntt_shared_semantics_bitrev
+    (k : nat) (v : 'I_(2 ^ k) -> R) (j : 'I_(2 ^ k)) :
+  @exact_ntt_shared_semantics R omega k (@bitrev_state R k v) j =
+  @exact_ntt_bitrev_eval k 1 v j.
+Proof. exact: exact_ntt_shared_semantics_from_bitrev. Qed.
+
+End ExactBitReversedEvaluation.
+
 (* ================================================================== *)
 (** * Shared-network complexity laws                                  *)
 (* ================================================================== *)
@@ -2356,6 +2462,19 @@ Definition negacyclic_eval_point (j : 'I_(ngr_dim p)) : ngr_ring p :=
 Definition negacyclic_quotient_eval
     (v : 'I_(ngr_dim p) -> ngr_ring p) (j : 'I_(ngr_dim p)) : ngr_ring p :=
   \sum_(i < ngr_dim p) v i * negacyclic_eval_point j ^+ val i.
+
+Definition negacyclic_recursive_eval
+    (v : 'I_(ngr_dim p) -> ngr_ring p) (j : 'I_(ngr_dim p)) : ngr_ring p :=
+  @exact_ntt_bitrev_eval (ngr_ring p) (ngr_omega p) (ngr_exp p) 1 v j.
+
+Theorem exact_negacyclic_operator_on_bitrev
+    (v : 'I_(ngr_dim p) -> ngr_ring p) (j : 'I_(ngr_dim p)) :
+  exact_negacyclic_operator (@bitrev_state (ngr_ring p) (ngr_exp p) v) j =
+  negacyclic_recursive_eval v j.
+Proof.
+exact: (@exact_ntt_shared_semantics_bitrev
+          (ngr_ring p) (ngr_omega p) (ngr_exp p) v j).
+Qed.
 
 Definition negacyclic_origin_index : 'I_(ngr_dim p) :=
   Ordinal (expn_gt0 2 (ngr_exp p)).
