@@ -583,7 +583,7 @@ End NTTSharedNetwork.
 
 Section NTTSharedSemantics.
 
-Variable R : ringType.
+Variable R : GRing.UnitRing.type.
 Variable omega : R.
 
 Open Scope ring_scope.
@@ -832,7 +832,7 @@ Qed.
 
 Section NTTSharedCircuitEval.
 
-Variable R : ringType.
+Variable R : GRing.UnitRing.type.
 Variable omega : R.
 
 Theorem ntt_shared_circuit_correct
@@ -1251,6 +1251,14 @@ elim: k v j => [|k IH] v j /=.
   + by rewrite IH.
 Qed.
 
+Lemma bitrev_ord_left_output (k : nat) (i : 'I_(2 ^ k)) :
+  bitrev_ord k.+1 (@ntt_left_output k i) = @even_ord k (bitrev_ord k i).
+Proof. by rewrite /= ntt_left_outputK. Qed.
+
+Lemma bitrev_ord_right_output (k : nat) (i : 'I_(2 ^ k)) :
+  bitrev_ord k.+1 (@ntt_right_output k i) = @odd_ord k (bitrev_ord k i).
+Proof. by rewrite /= ntt_right_outputK. Qed.
+
 Lemma bitrev_state_left (k : nat) (v : 'I_(2 ^ k.+1) -> T) (i : 'I_(2 ^ k)) :
   bitrev_state k.+1 v (@ntt_left_output k i) =
   bitrev_state k (fun t => v (@even_ord k t)) i.
@@ -1346,7 +1354,7 @@ End ExactNegacyclicSharedNetwork.
 
 Section ExactNegacyclicSharedSemantics.
 
-Variable R : ringType.
+Variable R : GRing.UnitRing.type.
 Variable omega : R.
 
 Open Scope ring_scope.
@@ -1514,6 +1522,254 @@ exact: exact_ntt_shared_network_correct.
 Qed.
 
 End ExactNegacyclicSharedSemantics.
+
+Section ExactNTTSharedDependence.
+
+Variable R : GRing.UnitRing.type.
+Variable omega : R.
+Hypothesis omega_unit : omega \is a GRing.unit.
+
+Open Scope ring_scope.
+
+Definition exact_join_state
+    (k : nat) (left_state right_state : 'I_(2 ^ k) -> R) :
+    'I_(2 ^ k.+1) -> R :=
+  fun t =>
+    join_halves left_state right_state
+      (@cast_ord (2 ^ k.+1) ((2 ^ k) + (2 ^ k))
+                 (esym (ntt_half_size_eq k)) t).
+
+Lemma exact_join_state_left
+    (k : nat) (left_state right_state : 'I_(2 ^ k) -> R) (i : 'I_(2 ^ k)) :
+  exact_join_state left_state right_state (@ntt_left_output k i) = left_state i.
+Proof.
+rewrite /exact_join_state /ntt_left_output /= cast_ordVK /join_halves.
+by rewrite split_lshift_eq.
+Qed.
+
+Lemma exact_join_state_right
+    (k : nat) (left_state right_state : 'I_(2 ^ k) -> R) (i : 'I_(2 ^ k)) :
+  exact_join_state left_state right_state (@ntt_right_output k i) = right_state i.
+Proof.
+rewrite /exact_join_state /ntt_right_output /= cast_ordVK /join_halves.
+by rewrite split_rshift_eq.
+Qed.
+
+Lemma exact_ntt_shared_semantics_from_join_upper
+    (stride k : nat) (left_state right_state : 'I_(2 ^ k) -> R)
+    (j : 'I_(2 ^ k)) :
+  @exact_ntt_shared_semantics_from R omega stride k.+1
+      (exact_join_state left_state right_state)
+      (@ntt_left_output k j) =
+  @exact_ntt_shared_semantics_from R omega stride.*2 k left_state j +
+  ntt_twiddle omega (stride * (val j).*2.+1) *
+  @exact_ntt_shared_semantics_from R omega stride.*2 k right_state j.
+Proof.
+pose N := (2 ^ k)%N.
+pose raw_net :=
+  parallel_network (exact_ntt_shared_network_from stride.*2 k)
+                   (exact_ntt_shared_network_from stride.*2 k) ++
+  [:: exact_ntt_merge_stage stride k].
+have Hraw :
+    eval_network (ntt_gate_semantics omega)
+        (exact_ntt_shared_network_from stride k.+1)
+        (exact_join_state left_state right_state) (@ntt_left_output k j) =
+    eval_network (ntt_gate_semantics omega) raw_net
+        (join_halves left_state right_state) (lshift N j).
+  exact: (@eval_shared_network_eq_rect
+            (N + N) (2 ^ k.+1) ntt_gate_tag R
+            (ntt_gate_semantics omega) raw_net
+            (ntt_half_size_eq k) (join_halves left_state right_state)
+            (lshift N j)).
+rewrite -(@exact_ntt_shared_network_from_correct R omega stride k.+1
+            (exact_join_state left_state right_state)
+            (@ntt_left_output k j)).
+rewrite Hraw /raw_net eval_network_cat /= /eval_stage /exact_ntt_merge_stage
+        /ntt_gate_semantics /= split_lshift_eq.
+rewrite eval_parallel_network_lshift eval_parallel_network_rshift.
+by rewrite !exact_ntt_shared_network_from_correct.
+Qed.
+
+Lemma exact_ntt_shared_semantics_from_join_lower
+    (stride k : nat) (left_state right_state : 'I_(2 ^ k) -> R)
+    (j : 'I_(2 ^ k)) :
+  @exact_ntt_shared_semantics_from R omega stride k.+1
+      (exact_join_state left_state right_state)
+      (@ntt_right_output k j) =
+  @exact_ntt_shared_semantics_from R omega stride.*2 k left_state j -
+  ntt_twiddle omega (stride * (val j).*2.+1) *
+  @exact_ntt_shared_semantics_from R omega stride.*2 k right_state j.
+Proof.
+pose N := (2 ^ k)%N.
+pose raw_net :=
+  parallel_network (exact_ntt_shared_network_from stride.*2 k)
+                   (exact_ntt_shared_network_from stride.*2 k) ++
+  [:: exact_ntt_merge_stage stride k].
+have Hraw :
+    eval_network (ntt_gate_semantics omega)
+        (exact_ntt_shared_network_from stride k.+1)
+        (exact_join_state left_state right_state) (@ntt_right_output k j) =
+    eval_network (ntt_gate_semantics omega) raw_net
+        (join_halves left_state right_state) (rshift N j).
+  exact: (@eval_shared_network_eq_rect
+            (N + N) (2 ^ k.+1) ntt_gate_tag R
+            (ntt_gate_semantics omega) raw_net
+            (ntt_half_size_eq k) (join_halves left_state right_state)
+            (rshift N j)).
+rewrite -(@exact_ntt_shared_network_from_correct R omega stride k.+1
+            (exact_join_state left_state right_state)
+            (@ntt_right_output k j)).
+rewrite Hraw /raw_net eval_network_cat /= /eval_stage /exact_ntt_merge_stage
+        /ntt_gate_semantics /= split_rshift_eq.
+rewrite eval_parallel_network_lshift eval_parallel_network_rshift.
+by rewrite !exact_ntt_shared_network_from_correct.
+Qed.
+
+Lemma exact_ntt_shared_semantics_from_zero
+    (stride k : nat) (j : 'I_(2 ^ k)) :
+  @exact_ntt_shared_semantics_from R omega stride k (@zero_state R k) j = 0.
+Proof.
+elim: k stride j => [|k IH] stride j /=.
+- by [].
+- pose raw_j := @cast_ord (2 ^ k.+1) ((2 ^ k) + (2 ^ k))
+                          (esym (ntt_half_size_eq k)) j.
+  case Hs: (split raw_j) => [i|i] /=;
+    by rewrite IH ?mulr0 ?addr0 ?subr0.
+Qed.
+
+Lemma exact_ntt_shared_semantics_zero (k : nat) (j : 'I_(2 ^ k)) :
+  @exact_ntt_shared_semantics R omega k (@zero_state R k) j = 0.
+Proof. exact: exact_ntt_shared_semantics_from_zero. Qed.
+
+Lemma exact_join_state_left_agree
+    (k : nat) (v1 v2 : 'I_(2 ^ k) -> R) (i : 'I_(2 ^ k)) :
+  (forall t, t != i -> v1 t = v2 t) ->
+  forall t, t != @ntt_left_output k i ->
+    exact_join_state v1 (@zero_state R k) t =
+    exact_join_state v2 (@zero_state R k) t.
+Proof.
+move=> Hagree t Hneq.
+rewrite /exact_join_state /join_halves.
+case Hs: (split (@cast_ord (2 ^ k.+1) ((2 ^ k) + (2 ^ k))
+                          (esym (ntt_half_size_eq k)) t)) => [s|s].
+- apply: Hagree.
+  have Ht : t = @ntt_left_output k s by exact: ntt_left_outputP Hs.
+  apply/eqP => Hsi.
+  move/eqP: Hneq => Hneq.
+  apply: Hneq.
+  by rewrite Ht Hsi.
+- by [].
+Qed.
+
+Lemma exact_join_state_right_agree
+    (k : nat) (v1 v2 : 'I_(2 ^ k) -> R) (i : 'I_(2 ^ k)) :
+  (forall t, t != i -> v1 t = v2 t) ->
+  forall t, t != @ntt_right_output k i ->
+    exact_join_state (@zero_state R k) v1 t =
+    exact_join_state (@zero_state R k) v2 t.
+Proof.
+move=> Hagree t Hneq.
+rewrite /exact_join_state /join_halves.
+case Hs: (split (@cast_ord (2 ^ k.+1) ((2 ^ k) + (2 ^ k))
+                          (esym (ntt_half_size_eq k)) t)) => [s|s].
+- by [].
+- apply: Hagree.
+  have Ht : t = @ntt_right_output k s by exact: ntt_right_outputP Hs.
+  apply/eqP => Hsi.
+  move/eqP: Hneq => Hneq.
+  apply: Hneq.
+  by rewrite Ht Hsi.
+Qed.
+
+Theorem exact_ntt_shared_semantics_from_full_dep (stride k : nat) :
+  func_full_dep (n := 2 ^ k) (@exact_ntt_shared_semantics_from R omega stride k).
+Proof.
+elim: k stride => [|k IH] stride j i.
+- exists (@zero_state R 0), (fun _ : 'I_1 => omega).
+  split.
+  + move=> t Hneq.
+    by rewrite (ord1 t) (ord1 i) eqxx in Hneq.
+  + rewrite /zero_state /= => H.
+    by move: omega_unit; rewrite -H unitr0.
+- pose raw_i := @cast_ord (2 ^ k.+1) ((2 ^ k) + (2 ^ k))
+                          (esym (ntt_half_size_eq k)) i.
+  pose raw_j := @cast_ord (2 ^ k.+1) ((2 ^ k) + (2 ^ k))
+                          (esym (ntt_half_size_eq k)) j.
+  case Hi: (split raw_i) => [ii|ii];
+  case Hj: (split raw_j) => [jj|jj].
+  + have [left1 [left2 [Hagree Hneq]]] := IH stride.*2 jj ii.
+    have -> : i = @ntt_left_output k ii by exact: ntt_left_outputP Hi.
+    exists (exact_join_state left1 (@zero_state R k)),
+           (exact_join_state left2 (@zero_state R k)).
+    split.
+    * exact: (@exact_join_state_left_agree k left1 left2 ii Hagree).
+    * have -> : j = @ntt_left_output k jj by exact: ntt_left_outputP Hj.
+      rewrite !exact_ntt_shared_semantics_from_join_upper
+              !exact_ntt_shared_semantics_from_zero mulr0 !addr0.
+      exact: Hneq.
+  + have [left1 [left2 [Hagree Hneq]]] := IH stride.*2 jj ii.
+    have -> : i = @ntt_left_output k ii by exact: ntt_left_outputP Hi.
+    exists (exact_join_state left1 (@zero_state R k)),
+           (exact_join_state left2 (@zero_state R k)).
+    split.
+    * exact: (@exact_join_state_left_agree k left1 left2 ii Hagree).
+    * have -> : j = @ntt_right_output k jj by exact: ntt_right_outputP Hj.
+      rewrite !exact_ntt_shared_semantics_from_join_lower
+              !exact_ntt_shared_semantics_from_zero mulr0 !subr0.
+      exact: Hneq.
+  + have [right1 [right2 [Hagree Hneq]]] := IH stride.*2 jj ii.
+    have -> : i = @ntt_right_output k ii by exact: ntt_right_outputP Hi.
+    exists (exact_join_state (@zero_state R k) right1),
+           (exact_join_state (@zero_state R k) right2).
+    split.
+    * exact: (@exact_join_state_right_agree k right1 right2 ii Hagree).
+    * have -> : j = @ntt_left_output k jj by exact: ntt_left_outputP Hj.
+      rewrite !exact_ntt_shared_semantics_from_join_upper
+              !exact_ntt_shared_semantics_from_zero !add0r.
+      apply: (mul_unit_neq (c := ntt_twiddle omega (stride * (val jj).*2.+1))).
+      -- exact: ntt_twiddle_unit.
+      -- exact: Hneq.
+  + have [right1 [right2 [Hagree Hneq]]] := IH stride.*2 jj ii.
+    have -> : i = @ntt_right_output k ii by exact: ntt_right_outputP Hi.
+    exists (exact_join_state (@zero_state R k) right1),
+           (exact_join_state (@zero_state R k) right2).
+    split.
+    * exact: (@exact_join_state_right_agree k right1 right2 ii Hagree).
+    * have -> : j = @ntt_right_output k jj by exact: ntt_right_outputP Hj.
+      rewrite !exact_ntt_shared_semantics_from_join_lower
+              !exact_ntt_shared_semantics_from_zero !sub0r => Heq.
+      apply: Hneq.
+      apply: (mul_unit_eq (c := ntt_twiddle omega (stride * (val jj).*2.+1))).
+      exact: ntt_twiddle_unit.
+      exact: (can_inj (@opprK R) Heq).
+Qed.
+
+Theorem exact_ntt_shared_semantics_full_dep (k : nat) :
+  func_full_dep (n := 2 ^ k) (@exact_ntt_shared_semantics R omega k).
+Proof. exact: exact_ntt_shared_semantics_from_full_dep. Qed.
+
+Theorem exact_ntt_shared_circuit_full_dep (k : nat) :
+  full_dependence (exact_ntt_shared_circuit k).
+Proof.
+apply: (@func_dep_implies_circ_dep (2 ^ k) ntt_gate_tag R
+          (ntt_gate_semantics omega)
+          (@exact_ntt_shared_semantics R omega k)
+          (exact_ntt_shared_circuit k)).
+- move=> v j.
+  symmetry.
+  exact: exact_ntt_shared_circuit_correct.
+- exact: exact_ntt_shared_semantics_full_dep.
+Qed.
+
+Theorem exact_ntt_shared_circuit_depth_bound (k : nat) :
+  (k <= circ_depth (exact_ntt_shared_circuit k))%N.
+Proof.
+apply: full_dep_depth_bound.
+- by [].
+- exact: exact_ntt_shared_circuit_full_dep.
+Qed.
+
+End ExactNTTSharedDependence.
 
 (* ================================================================== *)
 (** * Shared-network complexity laws                                  *)
@@ -2040,6 +2296,13 @@ exact: (@ntt_shared_circuit_depth_bound
           (ngr_ring p) (ngr_omega p) (ngr_omega_unit p) (ngr_exp p)).
 Qed.
 
+Theorem negacyclic_exact_shared_ntt_depth_bound (p : negacyclic_root_data) :
+  (ngr_exp p <= circ_depth (exact_ntt_shared_circuit (ngr_exp p)))%N.
+Proof.
+exact: (@exact_ntt_shared_circuit_depth_bound
+          (ngr_ring p) (ngr_omega p) (ngr_omega_unit p) (ngr_exp p)).
+Qed.
+
 Section NegacyclicExactOperator.
 
 Variable p : negacyclic_root_data.
@@ -2048,25 +2311,25 @@ Definition negacyclic_poly := 'I_(ngr_dim p) -> ngr_ring p.
 
 Definition exact_negacyclic_operator :
     negacyclic_poly -> 'I_(ngr_dim p) -> ngr_ring p :=
-  @exact_negacyclic_transform (ngr_ring p) (ngr_omega p) (ngr_exp p).
+  @exact_ntt_shared_semantics (ngr_ring p) (ngr_omega p) (ngr_exp p).
 
 Theorem exact_negacyclic_operator_network_exact
     (v : negacyclic_poly) (j : 'I_(ngr_dim p)) :
   eval_network (ntt_gate_semantics (ngr_omega p))
-      (ntt_shared_network (ngr_exp p)) v j =
+      (exact_ntt_shared_network (ngr_exp p)) v j =
   exact_negacyclic_operator v j.
-Proof. exact: ntt_shared_network_exact. Qed.
+Proof. exact: exact_ntt_shared_network_correct. Qed.
 
 Theorem exact_negacyclic_operator_circuit_exact
     (v : negacyclic_poly) (j : 'I_(ngr_dim p)) :
   eval (ntt_gate_semantics (ngr_omega p)) v
-       (ntt_shared_circuit (ngr_exp p) j) =
+       (exact_ntt_shared_circuit (ngr_exp p) j) =
   exact_negacyclic_operator v j.
-Proof. exact: ntt_shared_circuit_exact. Qed.
+Proof. exact: exact_ntt_shared_circuit_correct. Qed.
 
 Theorem exact_negacyclic_operator_full_dep :
   func_full_dep (n := ngr_dim p) exact_negacyclic_operator.
-Proof. exact: (@ntt_shared_semantics_full_dep
+Proof. exact: (@exact_ntt_shared_semantics_full_dep
                  (ngr_ring p) (ngr_omega p) (ngr_omega_unit p) (ngr_exp p)). Qed.
 
 Theorem exact_negacyclic_operator_depth_bound
@@ -2372,6 +2635,278 @@ exact: leq_trans (pipeline_preserves_ntt_critical_path P)
 Qed.
 
 End VerifiedPipeline.
+
+(* ================================================================== *)
+(** * Typed heterogeneous bootstrapping circuits                       *)
+(* ================================================================== *)
+
+Record typed_bundle := TypedBundle {
+  tb_width : nat;
+  tb_carrier : Type;
+}.
+
+Definition bundle_state (B : typed_bundle) : Type :=
+  'I_(tb_width B) -> tb_carrier B.
+
+Arguments bundle_state _ : clear implicits.
+
+Definition singleton_bundle (T : Type) : typed_bundle :=
+  TypedBundle 1 T.
+
+Definition singleton_state {T : Type} (x : T) :
+    bundle_state (singleton_bundle T) :=
+  fun _ => x.
+
+Definition singleton_value {T : Type}
+    (s : bundle_state (singleton_bundle T)) : T :=
+  s ord0.
+
+Lemma singleton_value_state (T : Type) (x : T) :
+  singleton_value (singleton_state x) = x.
+Proof. by []. Qed.
+
+Record hetero_stage (src dst : typed_bundle) := HeteroStage {
+  hs_semantics : bundle_state src -> bundle_state dst;
+  hs_depth : nat;
+  hs_depth_lb : nat;
+  hs_depth_cert : (hs_depth_lb <= hs_depth)%N;
+}.
+
+Arguments hs_semantics [src dst] _ _ _.
+Arguments hs_depth [src dst] _.
+Arguments hs_depth_lb [src dst] _.
+Arguments hs_depth_cert [src dst] _.
+
+Inductive hetero_circuit : typed_bundle -> typed_bundle -> Type :=
+| HCId : forall B, hetero_circuit B B
+| HCSeq : forall A B C,
+    hetero_stage A B -> hetero_circuit B C -> hetero_circuit A C.
+
+Fixpoint hetero_eval
+    (A B : typed_bundle) (C : hetero_circuit A B) :
+    bundle_state A -> bundle_state B :=
+  match C in hetero_circuit A0 B0 return bundle_state A0 -> bundle_state B0 with
+  | HCId _ => fun s => s
+  | HCSeq _ _ _ st rest => fun s => hetero_eval rest (hs_semantics st s)
+  end.
+
+Fixpoint hetero_depth
+    (A B : typed_bundle) (C : hetero_circuit A B) : nat :=
+  match C with
+  | HCId _ => 0
+  | HCSeq _ _ _ st rest => hs_depth st + hetero_depth rest
+  end.
+
+Fixpoint hetero_depth_lower_bound
+    (A B : typed_bundle) (C : hetero_circuit A B) : nat :=
+  match C with
+  | HCId _ => 0
+  | HCSeq _ _ _ st rest => hs_depth_lb st + hetero_depth_lower_bound rest
+  end.
+
+Lemma hetero_depth_lower_bound_sound
+    (A B : typed_bundle) (C : hetero_circuit A B) :
+  (hetero_depth_lower_bound C <= hetero_depth C)%N.
+Proof.
+elim: C => [B0|A0 B0 C0 st rest IH] //=.
+apply: leq_add.
+- exact: hs_depth_cert.
+- exact: IH.
+Qed.
+
+Section TypedBootstrappingObject.
+
+Variables (params : fhe_params) (ciphertext digits noise : Type).
+
+Definition tb_quotient_poly := 'I_(ring_dim params) -> fhe_ring params.
+
+Record tb_input_state := TypedBootstrappingInput {
+  tbi_poly : tb_quotient_poly;
+  tbi_ciphertext : ciphertext;
+  tbi_noise : noise;
+}.
+
+Record tb_forward_state := TypedForwardState {
+  tbf_poly : tb_quotient_poly;
+  tbf_ciphertext : ciphertext;
+  tbf_noise : noise;
+}.
+
+Record tb_pointwise_state := TypedPointwiseState {
+  tbp_poly : tb_quotient_poly;
+  tbp_ciphertext : ciphertext;
+  tbp_noise : noise;
+}.
+
+Record tb_inverse_state := TypedInverseState {
+  tbinv_poly : tb_quotient_poly;
+  tbinv_ciphertext : ciphertext;
+  tbinv_noise : noise;
+}.
+
+Record tb_digits_state := TypedDigitsState {
+  tbd_poly : tb_quotient_poly;
+  tbd_digits : digits;
+  tbd_ciphertext : ciphertext;
+  tbd_noise : noise;
+}.
+
+Record tb_keyswitch_state := TypedKeySwitchState {
+  tbk_poly : tb_quotient_poly;
+  tbk_ciphertext : ciphertext;
+  tbk_noise : noise;
+}.
+
+Record tb_modswitch_state := TypedModSwitchState {
+  tbm_poly : tb_quotient_poly;
+  tbm_ciphertext : ciphertext;
+  tbm_noise : noise;
+}.
+
+Record tb_output_state := TypedBootstrappingOutput {
+  tbo_poly : tb_quotient_poly;
+  tbo_ciphertext : ciphertext;
+  tbo_noise : noise;
+}.
+
+Record tb_trace := TypedBootstrappingTrace {
+  tbt_forward : tb_forward_state;
+  tbt_pointwise : tb_pointwise_state;
+  tbt_inverse : tb_inverse_state;
+  tbt_digits : tb_digits_state;
+  tbt_keyswitch : tb_keyswitch_state;
+  tbt_modswitch : tb_modswitch_state;
+  tbt_output : tb_output_state;
+}.
+
+Definition tb_input_bundle := singleton_bundle tb_input_state.
+Definition tb_forward_bundle := singleton_bundle tb_forward_state.
+Definition tb_pointwise_bundle := singleton_bundle tb_pointwise_state.
+Definition tb_inverse_bundle := singleton_bundle tb_inverse_state.
+Definition tb_digits_bundle := singleton_bundle tb_digits_state.
+Definition tb_keyswitch_bundle := singleton_bundle tb_keyswitch_state.
+Definition tb_modswitch_bundle := singleton_bundle tb_modswitch_state.
+Definition tb_output_bundle := singleton_bundle tb_output_state.
+
+Record verified_end_to_end_bootstrapping := VerifiedEndToEndBootstrapping {
+  vtb_forward_ntt : hetero_stage tb_input_bundle tb_forward_bundle;
+  vtb_forward_ntt_bound : (ring_exp params <= hs_depth_lb vtb_forward_ntt)%N;
+
+  vtb_pointwise_step : hetero_stage tb_forward_bundle tb_pointwise_bundle;
+
+  vtb_inverse_ntt : hetero_stage tb_pointwise_bundle tb_inverse_bundle;
+  vtb_inverse_ntt_bound : (ring_exp params <= hs_depth_lb vtb_inverse_ntt)%N;
+
+  vtb_digit_extract : hetero_stage tb_inverse_bundle tb_digits_bundle;
+  vtb_key_switch : hetero_stage tb_digits_bundle tb_keyswitch_bundle;
+  vtb_mod_switch : hetero_stage tb_keyswitch_bundle tb_modswitch_bundle;
+  vtb_noise_update : hetero_stage tb_modswitch_bundle tb_output_bundle;
+}.
+
+Definition typed_bootstrapping_circuit
+    (B : verified_end_to_end_bootstrapping) :
+    hetero_circuit tb_input_bundle tb_output_bundle :=
+  HCSeq (vtb_forward_ntt B)
+    (HCSeq (vtb_pointwise_step B)
+      (HCSeq (vtb_inverse_ntt B)
+        (HCSeq (vtb_digit_extract B)
+          (HCSeq (vtb_key_switch B)
+            (HCSeq (vtb_mod_switch B)
+                   (HCSeq (vtb_noise_update B) (HCId _))))))).
+
+Definition typed_bootstrapping_depth
+    (B : verified_end_to_end_bootstrapping) : nat :=
+  hetero_depth (typed_bootstrapping_circuit B).
+
+Definition typed_bootstrapping_depth_lower_bound
+    (B : verified_end_to_end_bootstrapping) : nat :=
+  hetero_depth_lower_bound (typed_bootstrapping_circuit B).
+
+Definition run_typed_bootstrapping_trace
+    (B : verified_end_to_end_bootstrapping) (x : tb_input_state) : tb_trace :=
+  let s1 := singleton_value (hs_semantics (vtb_forward_ntt B) (singleton_state x)) in
+  let s2 := singleton_value (hs_semantics (vtb_pointwise_step B) (singleton_state s1)) in
+  let s3 := singleton_value (hs_semantics (vtb_inverse_ntt B) (singleton_state s2)) in
+  let s4 := singleton_value (hs_semantics (vtb_digit_extract B) (singleton_state s3)) in
+  let s5 := singleton_value (hs_semantics (vtb_key_switch B) (singleton_state s4)) in
+  let s6 := singleton_value (hs_semantics (vtb_mod_switch B) (singleton_state s5)) in
+  let s7 := singleton_value (hs_semantics (vtb_noise_update B) (singleton_state s6)) in
+  TypedBootstrappingTrace s1 s2 s3 s4 s5 s6 s7.
+
+Definition run_typed_bootstrapping
+    (B : verified_end_to_end_bootstrapping) (x : tb_input_state) : tb_output_state :=
+  singleton_value (hetero_eval (typed_bootstrapping_circuit B) (singleton_state x)).
+
+Lemma run_typed_bootstrapping_eval
+    (B : verified_end_to_end_bootstrapping) (x : tb_input_state) :
+  run_typed_bootstrapping B x =
+  singleton_value (hetero_eval (typed_bootstrapping_circuit B) (singleton_state x)).
+Proof. by []. Qed.
+
+Lemma typed_bootstrapping_depth_lower_bound_sound
+    (B : verified_end_to_end_bootstrapping) :
+  (typed_bootstrapping_depth_lower_bound B <=
+   typed_bootstrapping_depth B)%N.
+Proof. exact: hetero_depth_lower_bound_sound. Qed.
+
+Theorem typed_bootstrapping_forward_stage_embeds
+    (B : verified_end_to_end_bootstrapping) :
+  (hs_depth_lb (vtb_forward_ntt B) <=
+   typed_bootstrapping_depth_lower_bound B)%N.
+Proof. by rewrite /typed_bootstrapping_depth_lower_bound /= leq_addr. Qed.
+
+Theorem typed_bootstrapping_inverse_stage_embeds
+    (B : verified_end_to_end_bootstrapping) :
+  (hs_depth_lb (vtb_inverse_ntt B) <=
+   typed_bootstrapping_depth_lower_bound B)%N.
+Proof.
+rewrite /typed_bootstrapping_depth_lower_bound /=.
+set suffix := hs_depth_lb (vtb_digit_extract B) +
+              (hs_depth_lb (vtb_key_switch B) +
+               (hs_depth_lb (vtb_mod_switch B) +
+                (hs_depth_lb (vtb_noise_update B) + 0))).
+have Hsuffix :
+    (hs_depth_lb (vtb_inverse_ntt B) <=
+     hs_depth_lb (vtb_inverse_ntt B) + suffix)%N.
+  exact: leq_addr.
+have Hpointwise :
+    (hs_depth_lb (vtb_inverse_ntt B) + suffix <=
+     hs_depth_lb (vtb_pointwise_step B) +
+     (hs_depth_lb (vtb_inverse_ntt B) + suffix))%N.
+  exact: leq_addl.
+have Hforward :
+    (hs_depth_lb (vtb_pointwise_step B) +
+     (hs_depth_lb (vtb_inverse_ntt B) + suffix) <=
+     hs_depth_lb (vtb_forward_ntt B) +
+     (hs_depth_lb (vtb_pointwise_step B) +
+      (hs_depth_lb (vtb_inverse_ntt B) + suffix)))%N.
+  exact: leq_addl.
+have Hstages :
+    (hs_depth_lb (vtb_inverse_ntt B) + suffix <=
+     hs_depth_lb (vtb_forward_ntt B) +
+     (hs_depth_lb (vtb_pointwise_step B) +
+      (hs_depth_lb (vtb_inverse_ntt B) + suffix)))%N.
+  exact: leq_trans Hpointwise Hforward.
+exact (leq_trans Hsuffix Hstages).
+Qed.
+
+Theorem typed_bootstrapping_preserves_ntt_critical_path
+    (B : verified_end_to_end_bootstrapping) :
+  (ring_exp params <= typed_bootstrapping_depth_lower_bound B)%N.
+Proof.
+exact: leq_trans (vtb_forward_ntt_bound B)
+                 (typed_bootstrapping_forward_stage_embeds B).
+Qed.
+
+Theorem typed_bootstrapping_global_depth_lower_bound
+    (B : verified_end_to_end_bootstrapping) :
+  (ring_exp params <= typed_bootstrapping_depth B)%N.
+Proof.
+exact: leq_trans (typed_bootstrapping_preserves_ntt_critical_path B)
+                 (typed_bootstrapping_depth_lower_bound_sound B).
+Qed.
+
+End TypedBootstrappingObject.
 
 Section NoiseGrowth.
 
@@ -3001,6 +3536,10 @@ Lemma z5_shared_ntt_depth_bound :
   (1 <= circ_depth (ntt_shared_circuit 1))%N.
 Proof. exact: negacyclic_shared_ntt_depth_bound z5_negacyclic_root. Qed.
 
+Lemma z5_exact_shared_ntt_depth_bound :
+  (1 <= circ_depth (exact_ntt_shared_circuit 1))%N.
+Proof. exact: negacyclic_exact_shared_ntt_depth_bound z5_negacyclic_root. Qed.
+
 Lemma z5_origin_annihilates_quotient :
   (@negacyclic_eval_point z5_negacyclic_root
       (negacyclic_origin_index z5_negacyclic_root)) ^+
@@ -3024,6 +3563,9 @@ Print Assumptions full_dep_depth_bound.
 Print Assumptions ntt_depth_irreducibility.
 Print Assumptions ntt_circuit_exists.
 Print Assumptions vandermonde_full_dep.
+Print Assumptions exact_ntt_shared_circuit_depth_bound.
+Print Assumptions exact_negacyclic_operator_depth_bound.
+Print Assumptions typed_bootstrapping_global_depth_lower_bound.
 Print Assumptions bootstrapping_depth_bound.
 Print Assumptions roofline_cross.
 Print Assumptions speedup_le_N.
@@ -3044,4 +3586,5 @@ Print Assumptions concrete_butterfly_full_dep.
 Print Assumptions concrete_speedup.
 Print Assumptions concrete_achievable.
 Print Assumptions z5_shared_ntt_depth_bound.
+Print Assumptions z5_exact_shared_ntt_depth_bound.
 Print Assumptions z5_origin_annihilates_quotient.
